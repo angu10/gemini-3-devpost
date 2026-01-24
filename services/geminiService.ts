@@ -43,7 +43,11 @@ export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
               startTime: { type: Type.NUMBER, description: "Start time in seconds" },
               endTime: { type: Type.NUMBER, description: "End time in seconds" },
               viralityScore: { type: Type.NUMBER, description: "Score from 1 to 10" },
-              category: { type: Type.STRING, enum: ['Funny', 'Insightful', 'Action', 'Summary', 'Other'] }
+              category: { 
+                type: Type.STRING, 
+                // Added Emotional to the enum to match the new prompt
+                enum: ['Funny', 'Insightful', 'Action', 'Emotional', 'Summary', 'Other'] 
+              }
             },
             required: ['title', 'description', 'startTime', 'endTime', 'viralityScore', 'category']
           }
@@ -105,25 +109,27 @@ export const findMomentInVideo = async (file: File, query: string): Promise<Clip
     const base64Data = await fileToGenerativePart(file);
 
     const searchPrompt = `
-      You are an expert video editor. The user is asking to find a specific moment in the video.
-      User Query: "${query}"
-      
-      Locate the most relevant segment that matches this query. 
-      Return a SINGLE clip object in JSON format.
-      If the query cannot be found in the video, return null.
-      
-      Required JSON Schema:
-      {
-        "found": boolean,
-        "clip": {
-           "title": "string (short catchy title based on query)",
-           "description": "string (what happens in this specific moment)",
-           "startTime": number (seconds),
-           "endTime": number (seconds),
-           "viralityScore": number (estimate 1-10),
-           "category": "Custom"
-        }
-      }
+      You are analyzing a video to find a specific moment requested by the user.
+
+      USER QUERY: "${query}"
+
+      TASK:
+      1. Search through the video for the moment that BEST matches this query
+      2. Consider visual content, spoken dialogue, actions, and context
+      3. If found, extract a 15-60 second clip containing that moment
+      4. If the query genuinely cannot be matched in the video, set "found" to false
+
+      MATCHING CRITERIA:
+      - Prioritize exact matches first (if they say "laughing", find actual laughter)
+      - Consider semantic similarity (if they say "funny part", find humor)
+      - Include context before/after the moment for clarity
+      - Ensure the clip is self-contained and makes sense alone
+
+      CLIP REQUIREMENTS:
+      - Duration: 15-60 seconds optimal
+      - Start slightly before the moment for context
+      - End after the moment completes
+      - Must be understandable without watching the full video
     `;
 
     const responseSchema = {

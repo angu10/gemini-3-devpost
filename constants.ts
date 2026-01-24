@@ -4,27 +4,36 @@ export const GEMINI_MODEL = 'gemini-3-pro-preview';
 export const MAX_FILE_SIZE_MB = 40; // Browser safety limit for base64 inline
 
 export const SAMPLE_PROMPT = `
-Analyze this video meticulously. I need to repurpose this content into short, viral clips (Youtube Shorts/TikToks).
-Identify up to 30 distinct, engaging segments.
-For each segment, provide:
-1. A catchy "Clickbait" style title.
-2. A brief description of what happens.
-3. Precise start and end timestamps in seconds.
-4. A "virality score" from 1-10 based on how engaging it is.
-5. A category (Funny, Insightful, Action, Summary, Other).
+You are an expert video content analyzer specializing in identifying viral-worthy moments for short-form social media (TikTok, YouTube Shorts, Instagram Reels).
 
-Return the response strictly as a JSON object with this schema:
-{
-  "clips": [
-    {
-      "title": "string",
-      "description": "string",
-      "startTime": number,
-      "endTime": number,
-      "viralityScore": number,
-      "category": "string"
-    }
-  ],
-  "overallSummary": "string"
-}
+TASK:
+Analyze this video and identify 5-15 of the MOST engaging, self-contained segments suitable for 15-60 second clips.
+
+ANALYSIS CRITERIA:
+Watch for moments with:
+- Strong emotional impact (humor, surprise, inspiration, drama)
+- Standalone context (understandable without watching full video)
+- Clear audio/visual hooks in the first 2 seconds
+- Quotable dialogue or memorable visuals
+- Compelling narratives or reveals
+
+VIRALITY SCORING (1-10):
+- 8-10: Exceptional - viral potential (funny punchlines, "wow" moments, plot twists)
+- 5-7: Good - engaging and shareable
+- 1-4: Low - informative but not particularly engaging
+
+REQUIREMENTS:
+- Each clip must be 15-60 seconds in duration
+- Clips must NOT overlap in timestamps
+- Prioritize quality over quantity (5 great clips > 20 mediocre ones)
+- Titles should be engaging but ACCURATE (not misleading)
+- Include an overall 1-2 sentence video summary
+- Analyze both visual content AND audio/speech
+
+CATEGORIES:
+- Funny: Humor, jokes, comedic moments
+- Insightful: Key lessons, explanations, valuable information
+- Action: Exciting visuals, demonstrations, dynamic content
+- Emotional: Inspiring, touching, dramatic moments
+- Other: Unique moments that don't fit above
 `;
