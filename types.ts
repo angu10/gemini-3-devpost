@@ -1,3 +1,4 @@
+
 export interface Clip {
   id: string;
   title: string;
@@ -31,4 +32,15 @@ export interface SearchState {
   isSearching: boolean;
   query: string;
   error?: string | null;
+}
+
+export interface TimeRange {
+  start: number;
+  end: number;
+}
+
+export interface VirtualEdit {
+  isActive: boolean;
+  description: string;
+  keepSegments: TimeRange[];
 }

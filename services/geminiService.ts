@@ -1,6 +1,7 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { GEMINI_MODEL, SAMPLE_PROMPT } from '../constants';
-import { AnalysisResponse, Clip } from '../types';
+import { AnalysisResponse, Clip, TimeRange } from '../types';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -123,37 +124,38 @@ export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<A
 };
 
 /**
- * Searches the video using the File URI.
+ * Unified Command Processor
+ * Decides if the user wants to FIND a clip or EDIT the video (Virtual Edit).
  */
-export const findMomentInVideo = async (fileUri: string, mimeType: string, query: string): Promise<Clip | null> => {
+export const processUserCommand = async (
+  fileUri: string, 
+  mimeType: string, 
+  query: string
+): Promise<{ type: 'CLIP' | 'EDIT' | 'NONE', data: any }> => {
   try {
-    const searchPrompt = `
-      You are analyzing a video to find a specific moment requested by the user.
-
+    const prompt = `
+      You are an intelligent video assistant.
       USER QUERY: "${query}"
 
       TASK:
-      1. Search through the video for the moment that BEST matches this query
-      2. Consider visual content, spoken dialogue, actions, and context
-      3. If found, extract a 15-60 second clip containing that moment
-      4. If the query genuinely cannot be matched in the video, set "found" to false
-
-      MATCHING CRITERIA:
-      - Prioritize exact matches first (if they say "laughing", find actual laughter)
-      - Consider semantic similarity (if they say "funny part", find humor)
-      - Include context before/after the moment for clarity
-      - Ensure the clip is self-contained and makes sense alone
-
-      CLIP REQUIREMENTS:
-      - Duration: 15-60 seconds optimal
-      - Start slightly before the moment for context
-      - End after the moment completes
-      - Must be understandable without watching the full video
+      Determine if the user wants to:
+      1. SEARCH/FIND a specific moment (e.g., "Find the part where...", "Show me the goal").
+      2. EDIT/FILTER the playback (e.g., "Remove ums", "Skip silence", "Cut out the boring parts", "Only show the action scenes").
+      
+      OUTPUT RULES:
+      - If EDIT/FILTER: Return a list of time ranges to KEEP (include everything EXCEPT what needs to be removed).
+      - If SEARCH/FIND: Return a single best matching clip.
+      
+      IMPORTANT FOR EDITING:
+      - If the user says "Remove X", you must identify all timestamps of X, and return the COMPLEMENT segments (the parts to keep).
+      - Ensure 'keepSegments' cover the entire video excluding the unwanted parts.
     `;
 
     const responseSchema = {
       type: Type.OBJECT,
       properties: {
+        intent: { type: Type.STRING, enum: ['SEARCH', 'EDIT', 'UNKNOWN'] },
+        // For SEARCH
         found: { type: Type.BOOLEAN },
         clip: {
           type: Type.OBJECT,
@@ -164,11 +166,22 @@ export const findMomentInVideo = async (fileUri: string, mimeType: string, query
             endTime: { type: Type.NUMBER },
             viralityScore: { type: Type.NUMBER },
             category: { type: Type.STRING, enum: ['Custom'] }
-          },
-          required: ['title', 'description', 'startTime', 'endTime', 'viralityScore', 'category']
+          }
+        },
+        // For EDIT
+        editDescription: { type: Type.STRING },
+        keepSegments: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              start: { type: Type.NUMBER },
+              end: { type: Type.NUMBER }
+            }
+          }
         }
       },
-      required: ['found']
+      required: ['intent']
     };
 
     const response = await ai.models.generateContent({
@@ -176,7 +189,7 @@ export const findMomentInVideo = async (fileUri: string, mimeType: string, query
       contents: {
         parts: [
           { fileData: { mimeType: mimeType, fileUri: fileUri } },
-          { text: searchPrompt }
+          { text: prompt }
         ]
       },
       config: {
@@ -186,19 +199,35 @@ export const findMomentInVideo = async (fileUri: string, mimeType: string, query
     });
 
     const text = response.text;
-    if (!text) return null;
+    if (!text) return { type: 'NONE', data: null };
+    
+    const result = JSON.parse(text);
 
-    const data = JSON.parse(text);
-    if (!data.found || !data.clip) return null;
+    if (result.intent === 'SEARCH' && result.found && result.clip) {
+      return { 
+        type: 'CLIP', 
+        data: {
+          ...result.clip,
+          id: `custom-${Date.now()}`,
+          category: 'Custom'
+        }
+      };
+    }
 
-    return {
-      ...data.clip,
-      id: `custom-${Date.now()}`,
-      category: 'Custom'
-    };
+    if (result.intent === 'EDIT' && result.keepSegments && result.keepSegments.length > 0) {
+      return {
+        type: 'EDIT',
+        data: {
+          description: result.editDescription || query,
+          keepSegments: result.keepSegments.sort((a: TimeRange, b: TimeRange) => a.start - b.start)
+        }
+      };
+    }
+
+    return { type: 'NONE', data: null };
 
   } catch (error) {
-    console.error("Error searching video:", error);
+    console.error("Error processing command:", error);
     throw error;
   }
 };
