@@ -39,8 +39,17 @@ export interface TimeRange {
   end: number;
 }
 
+export interface YouTubeMetadata {
+  title: string;
+  description: string;
+  tags: string[];
+}
+
 export interface VirtualEdit {
   isActive: boolean;
   description: string;
   keepSegments: TimeRange[];
+  filterStyle?: string; // CSS filter string e.g., "contrast(1.1) grayscale(1)"
+  transitionEffect?: 'FADE_BLACK' | 'FLASH_WHITE' | 'ZOOM' | 'NONE';
+  youtubeMetadata?: YouTubeMetadata;
 }

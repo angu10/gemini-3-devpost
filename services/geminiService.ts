@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { GEMINI_MODEL, SAMPLE_PROMPT } from '../constants';
-import { AnalysisResponse, Clip, TimeRange } from '../types';
+import { AnalysisResponse, Clip, TimeRange, YouTubeMetadata } from '../types';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -125,7 +125,7 @@ export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<A
 
 /**
  * Unified Command Processor
- * Decides if the user wants to FIND a clip or EDIT the video (Virtual Edit).
+ * Decides if the user wants to FIND a clip or EDIT the video (Virtual Edit/Director Mode).
  */
 export const processUserCommand = async (
   fileUri: string, 
@@ -134,21 +134,33 @@ export const processUserCommand = async (
 ): Promise<{ type: 'CLIP' | 'EDIT' | 'NONE', data: any }> => {
   try {
     const prompt = `
-      You are an intelligent video assistant.
+      You are an intelligent video assistant acting as a Professional AI Director.
       USER QUERY: "${query}"
 
       TASK:
       Determine if the user wants to:
-      1. SEARCH/FIND a specific moment (e.g., "Find the part where...", "Show me the goal").
-      2. EDIT/FILTER the playback (e.g., "Remove ums", "Skip silence", "Cut out the boring parts", "Only show the action scenes").
-      
+      1. SEARCH/FIND a specific moment.
+      2. EDIT/MODIFY the video (Cuts, Styles, Transitions, Metadata).
+
       OUTPUT RULES:
-      - If EDIT/FILTER: Return a list of time ranges to KEEP (include everything EXCEPT what needs to be removed).
-      - If SEARCH/FIND: Return a single best matching clip.
       
-      IMPORTANT FOR EDITING:
-      - If the user says "Remove X", you must identify all timestamps of X, and return the COMPLEMENT segments (the parts to keep).
-      - Ensure 'keepSegments' cover the entire video excluding the unwanted parts.
+      IF SEARCH/FIND:
+      - Return 'intent': 'SEARCH' and the single best clip.
+
+      IF EDIT/MODIFY (e.g. "Remove ums", "Make it cinematic", "Export for YouTube"):
+      - Return 'intent': 'EDIT'.
+      - 'keepSegments': List of time ranges to KEEP. 
+         * If the user only asks for style (e.g. "Make it black and white"), return the FULL video duration as one segment (0 to duration).
+         * If the user asks to remove things, calculate the cuts.
+      - 'filterStyle': Generate a CSS filter string if requested (e.g. "grayscale(1) contrast(1.2)" for noir, "saturate(1.3) contrast(1.1)" for vibrant). Default to null.
+      - 'transitionEffect': If the user mentions transitions or "professional" editing, pick one: 'FADE_BLACK', 'FLASH_WHITE', 'ZOOM'. Default to null.
+      - 'youtubeMetadata': If the user mentions "Export", "YouTube", "Title", or "SEO", generate optimized metadata.
+
+      CSS FILTER GUIDE:
+      - Cinematic/Professional: "contrast(1.1) saturate(0.9) sepia(0.2)"
+      - Noir/B&W: "grayscale(1) contrast(1.2)"
+      - Vibrant/Vlog: "saturate(1.4) brightness(1.05)"
+      - Vintage: "sepia(0.6) contrast(0.9) brightness(0.9)"
     `;
 
     const responseSchema = {
@@ -168,7 +180,7 @@ export const processUserCommand = async (
             category: { type: Type.STRING, enum: ['Custom'] }
           }
         },
-        // For EDIT
+        // For EDIT (Director Mode)
         editDescription: { type: Type.STRING },
         keepSegments: {
           type: Type.ARRAY,
@@ -178,6 +190,17 @@ export const processUserCommand = async (
               start: { type: Type.NUMBER },
               end: { type: Type.NUMBER }
             }
+          }
+        },
+        filterStyle: { type: Type.STRING, nullable: true },
+        transitionEffect: { type: Type.STRING, enum: ['FADE_BLACK', 'FLASH_WHITE', 'ZOOM', 'NONE'], nullable: true },
+        youtubeMetadata: {
+          type: Type.OBJECT,
+          nullable: true,
+          properties: {
+            title: { type: Type.STRING },
+            description: { type: Type.STRING },
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } }
           }
         }
       },
@@ -214,12 +237,22 @@ export const processUserCommand = async (
       };
     }
 
-    if (result.intent === 'EDIT' && result.keepSegments && result.keepSegments.length > 0) {
+    if (result.intent === 'EDIT') {
+      // If AI didn't return segments (e.g. just asked for style), assume we keep the whole video?
+      // Actually the prompt instructs to return full duration, but let's be safe.
+      // We'll handle empty segments in the UI or here. 
+      // For now, assume Gemini follows instructions.
+      
       return {
         type: 'EDIT',
         data: {
           description: result.editDescription || query,
-          keepSegments: result.keepSegments.sort((a: TimeRange, b: TimeRange) => a.start - b.start)
+          keepSegments: result.keepSegments && result.keepSegments.length > 0 
+            ? result.keepSegments.sort((a: TimeRange, b: TimeRange) => a.start - b.start) 
+            : [], // Empty array might imply "keep original" or "keep nothing", handled in App.tsx
+          filterStyle: result.filterStyle,
+          transitionEffect: result.transitionEffect,
+          youtubeMetadata: result.youtubeMetadata
         }
       };
     }

@@ -16,6 +16,7 @@ const App: React.FC = () => {
   // Player State
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [downloadingClipId, setDownloadingClipId] = useState<string | null>(null);
+  const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
   
   // Smart Features State
   const [searchState, setSearchState] = useState<SearchState>({ isSearching: false, query: '' });
@@ -108,24 +109,36 @@ const App: React.FC = () => {
         setSearchState(prev => ({ ...prev, isSearching: false, query: '' }));
       } 
       else if (result.type === 'EDIT') {
-        // Handle Virtual Edit
+        // Handle Virtual Edit / Director Mode
+        
+        // If keepSegments is empty, implies "Keep Everything" or logic error.
+        // If the intent was "Make it black and white", we want to keep the whole video.
+        // We'll fallback to [0, duration] if segments are missing but style/metadata exists.
+        let finalSegments = result.data.keepSegments;
+        if ((!finalSegments || finalSegments.length === 0) && videoRef.current) {
+            finalSegments = [{ start: 0, end: videoRef.current.duration }];
+        }
+
         setVirtualEdit({
           isActive: true,
           description: result.data.description,
-          keepSegments: result.data.keepSegments
+          keepSegments: finalSegments,
+          filterStyle: result.data.filterStyle,
+          transitionEffect: result.data.transitionEffect,
+          youtubeMetadata: result.data.youtubeMetadata
         });
         setActiveClipId(null); // Exit clip mode
         
         // Start playing from the beginning of the first valid segment
-        if (videoRef.current && result.data.keepSegments.length > 0) {
-          videoRef.current.currentTime = result.data.keepSegments[0].start;
+        if (videoRef.current && finalSegments.length > 0) {
+          videoRef.current.currentTime = finalSegments[0].start;
           videoRef.current.play();
         }
         
         setSearchState(prev => ({ ...prev, isSearching: false, query: '' }));
       } 
       else {
-        setSearchState(prev => ({ ...prev, isSearching: false, error: "I couldn't understand that request. Try 'Find...' or 'Remove...'" }));
+        setSearchState(prev => ({ ...prev, isSearching: false, error: "I couldn't understand that request. Try 'Find...', 'Remove...', or 'Make it cinematic'" }));
       }
     } catch (err) {
       setSearchState(prev => ({ ...prev, isSearching: false, error: "Failed to process request." }));
@@ -138,6 +151,11 @@ const App: React.FC = () => {
     setActiveClipId(clip.id);
     videoRef.current.currentTime = clip.startTime;
     videoRef.current.play();
+  };
+
+  const triggerTransition = () => {
+    setIsTransitioning(true);
+    setTimeout(() => setIsTransitioning(false), 800); // 800ms transition duration
   };
 
   const handleDownloadClip = async (e: React.MouseEvent, clip: Clip) => {
@@ -234,6 +252,9 @@ const App: React.FC = () => {
              // Jump to the NEXT valid segment
              const nextSegment = keepSegments[currentSegmentIndex + 1];
              if (nextSegment) {
+               if (virtualEdit.transitionEffect && virtualEdit.transitionEffect !== 'NONE') {
+                  triggerTransition();
+               }
                videoRef.current.currentTime = nextSegment.start;
              } else {
                // End of all segments
@@ -245,6 +266,9 @@ const App: React.FC = () => {
         // Find the next upcoming valid segment
         const nextSegment = keepSegments.find(seg => seg.start > currentTime);
         if (nextSegment) {
+          if (virtualEdit.transitionEffect && virtualEdit.transitionEffect !== 'NONE') {
+            triggerTransition();
+          }
           videoRef.current.currentTime = nextSegment.start;
         } else {
           // No more valid segments after this point
@@ -275,6 +299,7 @@ const App: React.FC = () => {
     setActiveClipId(null);
     setDownloadingClipId(null);
     setVirtualEdit(null);
+    setIsTransitioning(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -321,14 +346,26 @@ const App: React.FC = () => {
             <div className="lg:col-span-2 flex flex-col gap-4">
               <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl ring-1 ring-slate-800 aspect-video group">
                 {videoUrl && (
-                  <video ref={videoRef} src={videoUrl} className="w-full h-full object-contain" controls onTimeUpdate={handleTimeUpdate}/>
+                  <video 
+                    ref={videoRef} 
+                    src={videoUrl} 
+                    className="w-full h-full object-contain transition-all duration-500" 
+                    style={{ filter: virtualEdit?.filterStyle || 'none' }}
+                    controls 
+                    onTimeUpdate={handleTimeUpdate}
+                  />
                 )}
                 
-                {/* Visual Indicator for Active Virtual Edit */}
+                {/* Transition Overlay */}
+                <div 
+                  className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 ${isTransitioning ? 'opacity-100' : 'opacity-0'}`}
+                />
+
+                {/* Visual Indicator for Active Virtual Edit / Director Mode */}
                 {virtualEdit && virtualEdit.isActive && (
-                  <div className="absolute top-4 right-4 bg-purple-600/90 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse">
-                     <span>✂️ Smart Filter Active: {virtualEdit.description}</span>
-                     <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-purple-700 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                  <div className="absolute top-4 right-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse z-20">
+                     <span>🎬 Director Mode: {virtualEdit.description}</span>
+                     <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-black/20 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
                   </div>
                 )}
 
@@ -345,18 +382,47 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              <div className="flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700">
-                <div>
-                  <h3 className="font-semibold text-slate-200 truncate max-w-md">{file.name}</h3>
-                  <p className="text-xs text-slate-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+              {/* Info Bar / YouTube Metadata */}
+              {virtualEdit?.youtubeMetadata ? (
+                <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-5 rounded-xl border border-slate-700 shadow-xl">
+                  <div className="flex items-center justify-between mb-4">
+                     <h3 className="text-red-500 font-bold flex items-center gap-2"><svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg> YouTube Export Metadata</h3>
+                     <Button variant="secondary" className="text-xs py-1 px-3">Copy</Button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs text-slate-500 uppercase font-semibold">Title</label>
+                      <p className="text-lg font-medium text-white">{virtualEdit.youtubeMetadata.title}</p>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 uppercase font-semibold">Description</label>
+                      <p className="text-sm text-slate-300 whitespace-pre-wrap">{virtualEdit.youtubeMetadata.description}</p>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 uppercase font-semibold">Tags</label>
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {virtualEdit.youtubeMetadata.tags.map(tag => (
+                          <span key={tag} className="text-xs bg-slate-700/50 text-blue-300 px-2 py-1 rounded-full">#{tag}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
-                  <Button onClick={handleAnalyze} className="shadow-lg shadow-blue-500/20"><span className="mr-2">✨</span> Generate Clips</Button>
-                )}
-                {analysisData && <div className="text-sm text-slate-400">Found <span className="text-white font-bold">{analysisData.clips.length}</span> clips</div>}
-              </div>
+              ) : (
+                /* Default Info Bar */
+                <div className="flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700">
+                  <div>
+                    <h3 className="font-semibold text-slate-200 truncate max-w-md">{file.name}</h3>
+                    <p className="text-xs text-slate-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                  </div>
+                  {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
+                    <Button onClick={handleAnalyze} className="shadow-lg shadow-blue-500/20"><span className="mr-2">✨</span> Generate Clips</Button>
+                  )}
+                  {analysisData && <div className="text-sm text-slate-400">Found <span className="text-white font-bold">{analysisData.clips.length}</span> clips</div>}
+                </div>
+              )}
 
-              {analysisData?.overallSummary && (
+              {analysisData?.overallSummary && !virtualEdit?.youtubeMetadata && (
                 <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Video Summary</h4>
                   <p className="text-slate-300 text-sm leading-relaxed">{analysisData.overallSummary}</p>
@@ -369,7 +435,7 @@ const App: React.FC = () => {
                 <form onSubmit={handleCommand} className="relative">
                   <input
                     type="text"
-                    placeholder="Search clips OR ask to edit (e.g. 'Remove ums')"
+                    placeholder="Search OR 'Make it cinematic...'"
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-4 pr-10 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500 transition-all"
                     value={searchState.query}
                     onChange={(e) => setSearchState(prev => ({ ...prev, query: e.target.value }))}
@@ -386,8 +452,8 @@ const App: React.FC = () => {
                 {searchState.error && <p className="text-xs text-red-400 mt-2 ml-1">{searchState.error}</p>}
                 <div className="mt-2 flex gap-2 flex-wrap">
                   <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Try:</span>
-                  <button onClick={() => setSearchState(p => ({...p, query: "Remove all silences and pauses"}))} className="text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/50 transition-colors">"Remove silence"</button>
-                  <button onClick={() => setSearchState(p => ({...p, query: "Remove the part where I say 'um'"}))} className="text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/50 transition-colors">"Remove 'um'"</button>
+                  <button onClick={() => setSearchState(p => ({...p, query: "Make it look cinematic & professional"}))} className="text-[10px] text-purple-400 hover:text-purple-300 bg-purple-900/20 px-1.5 py-0.5 rounded border border-purple-900/50 transition-colors">"Cinematic Look"</button>
+                  <button onClick={() => setSearchState(p => ({...p, query: "Remove silences and ums"}))} className="text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/50 transition-colors">"Remove 'um'"</button>
                 </div>
               </div>
 
