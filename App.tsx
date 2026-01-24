@@ -1,18 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Clip, AppState, AnalysisResponse, SearchState } from './types';
 import { MAX_FILE_SIZE_MB } from './constants';
-import { analyzeVideo, findMomentInVideo } from './services/geminiService';
+import { analyzeVideo, findMomentInVideo, uploadVideo } from './services/geminiService';
 import { Button } from './components/Button';
 import { ClipCard } from './components/ClipCard';
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [fileUri, setFileUri] = useState<string | null>(null); // Store Gemini File URI
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [downloadingClipId, setDownloadingClipId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string>("Processing...");
   
   // Search State
   const [searchState, setSearchState] = useState<SearchState>({ isSearching: false, query: '' });
@@ -46,6 +48,7 @@ const App: React.FC = () => {
 
     setFile(selectedFile);
     setVideoUrl(URL.createObjectURL(selectedFile));
+    setFileUri(null); // Reset URI for new file
     setAppState(AppState.READY);
     setErrorMsg(null);
     setAnalysisData(null);
@@ -53,14 +56,27 @@ const App: React.FC = () => {
     setSearchState({ isSearching: false, query: '' });
   };
 
+  const ensureFileUploaded = async (currentFile: File): Promise<string> => {
+    if (fileUri) return fileUri;
+    
+    setAppState(AppState.UPLOADING);
+    const uri = await uploadVideo(currentFile, (msg) => setStatusMessage(msg));
+    setFileUri(uri);
+    return uri;
+  };
+
   const handleAnalyze = async () => {
     if (!file) return;
 
-    setAppState(AppState.ANALYZING);
     setErrorMsg(null);
 
     try {
-      const data = await analyzeVideo(file);
+      const uri = await ensureFileUploaded(file);
+      
+      setAppState(AppState.ANALYZING);
+      setStatusMessage("Identifying viral clips...");
+      
+      const data = await analyzeVideo(uri, file.type);
       setAnalysisData(data);
       setAppState(AppState.READY);
     } catch (err: any) {
@@ -77,7 +93,9 @@ const App: React.FC = () => {
     setSearchState(prev => ({ ...prev, isSearching: true, error: null }));
 
     try {
-      const customClip = await findMomentInVideo(file, searchState.query);
+      const uri = await ensureFileUploaded(file);
+      
+      const customClip = await findMomentInVideo(uri, file.type, searchState.query);
       
       if (customClip) {
         setAnalysisData(prev => {
@@ -205,6 +223,7 @@ const App: React.FC = () => {
   const reset = () => {
     setFile(null);
     setVideoUrl(null);
+    setFileUri(null);
     setAnalysisData(null);
     setAppState(AppState.IDLE);
     setActiveClipId(null);
@@ -296,16 +315,18 @@ const App: React.FC = () => {
                   />
                 )}
                 
-                {/* Overlay while analyzing */}
-                {appState === AppState.ANALYZING && (
+                {/* Overlay while analyzing or uploading */}
+                {(appState === AppState.ANALYZING || appState === AppState.UPLOADING) && (
                   <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-10 flex-col">
                     <div className="relative w-24 h-24 mb-4">
                       <div className="absolute inset-0 border-t-4 border-blue-500 rounded-full animate-spin"></div>
                       <div className="absolute inset-2 border-r-4 border-purple-500 rounded-full animate-spin animation-delay-150"></div>
                       <div className="absolute inset-4 border-b-4 border-pink-500 rounded-full animate-spin animation-delay-300"></div>
                     </div>
-                    <p className="text-lg font-semibold animate-pulse">Gemini is watching your video...</p>
-                    <p className="text-sm text-slate-400 mt-2">Identifying viral moments</p>
+                    <p className="text-lg font-semibold animate-pulse">{statusMessage}</p>
+                    <p className="text-sm text-slate-400 mt-2">
+                      {appState === AppState.UPLOADING ? "Sending video to Gemini..." : "Identifying viral moments..."}
+                    </p>
                   </div>
                 )}
               </div>
@@ -317,7 +338,7 @@ const App: React.FC = () => {
                   <p className="text-xs text-slate-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
                 </div>
                 
-                {!analysisData && appState !== AppState.ANALYZING && (
+                {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
                   <Button onClick={handleAnalyze} className="shadow-lg shadow-blue-500/20">
                     <span className="mr-2">✨</span> Generate Clips
                   </Button>
@@ -350,7 +371,7 @@ const App: React.FC = () => {
                     className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-4 pr-10 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500 transition-all"
                     value={searchState.query}
                     onChange={(e) => setSearchState(prev => ({ ...prev, query: e.target.value }))}
-                    disabled={searchState.isSearching || appState === AppState.ANALYZING}
+                    disabled={searchState.isSearching || appState === AppState.ANALYZING || appState === AppState.UPLOADING}
                   />
                   <button 
                     type="submit"
@@ -378,7 +399,7 @@ const App: React.FC = () => {
                    </div>
                 )}
 
-                {!analysisData && appState !== AppState.ANALYZING && (
+                {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
                   <div className="flex flex-col items-center justify-center h-full text-slate-500 opacity-60">
                      <svg className="w-12 h-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />

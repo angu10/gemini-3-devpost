@@ -6,29 +6,53 @@ import { AnalysisResponse, Clip } from '../types';
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
- * Converts a File object to a Base64 string usable by the API.
+ * Uploads a file to the Gemini File API and waits for it to be processed.
  */
-export const fileToGenerativePart = async (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      // Remove the data URL prefix (e.g., "data:video/mp4;base64,")
-      const base64Data = base64String.split(',')[1];
-      resolve(base64Data);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
+export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
+  try {
+    if (onProgress) onProgress("Uploading video to Gemini...");
+    
+    const uploadResult = await ai.files.upload({
+      file: file,
+      config: { 
+        displayName: file.name,
+      }
+    });
+
+    const fileUri = uploadResult.uri;
+    const name = uploadResult.name;
+
+    // Poll for processing state
+    let fileState = uploadResult.state;
+    
+    while (fileState === 'PROCESSING') {
+      if (onProgress) onProgress("Processing video on server...");
+      
+      // Wait 2 seconds before checking again
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const fileStatus = await ai.files.get({ name: name });
+      fileState = fileStatus.state;
+      
+      if (fileState === 'FAILED') {
+        throw new Error("Video processing failed on Gemini servers.");
+      }
+    }
+
+    if (onProgress) onProgress("Video processed and ready.");
+    return fileUri;
+
+  } catch (error) {
+    console.error("Error uploading file:", error);
+    throw new Error("Failed to upload and process video.");
+  }
 };
 
 /**
- * Analyzes the video using Gemini to extract clips.
+ * Analyzes the video using the File URI (Server Reference).
  */
-export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
+export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<AnalysisResponse> => {
   try {
-    const base64Data = await fileToGenerativePart(file);
-
     // Schema for structured JSON output
     const responseSchema = {
       type: Type.OBJECT,
@@ -45,7 +69,6 @@ export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
               viralityScore: { type: Type.NUMBER, description: "Score from 1 to 10" },
               category: { 
                 type: Type.STRING, 
-                // Added Emotional to the enum to match the new prompt
                 enum: ['Funny', 'Insightful', 'Action', 'Emotional', 'Summary', 'Other'] 
               }
             },
@@ -62,9 +85,9 @@ export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
       contents: {
         parts: [
           {
-            inlineData: {
-              mimeType: file.type,
-              data: base64Data
+            fileData: {
+              mimeType: mimeType,
+              fileUri: fileUri
             }
           },
           {
@@ -75,7 +98,7 @@ export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
       config: {
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        temperature: 0.4, // Lower temperature for more factual timestamping
+        temperature: 0.4, 
       }
     });
 
@@ -84,10 +107,8 @@ export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
       throw new Error("No response from Gemini");
     }
 
-    // Parse the JSON response
     const data = JSON.parse(text) as AnalysisResponse;
     
-    // Add IDs to clips for React keys
     data.clips = data.clips.map((clip, index) => ({
       ...clip,
       id: `clip-${index}-${Date.now()}`
@@ -102,12 +123,10 @@ export const analyzeVideo = async (file: File): Promise<AnalysisResponse> => {
 };
 
 /**
- * Searches the video for a specific user query and returns a single clip.
+ * Searches the video using the File URI.
  */
-export const findMomentInVideo = async (file: File, query: string): Promise<Clip | null> => {
+export const findMomentInVideo = async (fileUri: string, mimeType: string, query: string): Promise<Clip | null> => {
   try {
-    const base64Data = await fileToGenerativePart(file);
-
     const searchPrompt = `
       You are analyzing a video to find a specific moment requested by the user.
 
@@ -156,7 +175,7 @@ export const findMomentInVideo = async (file: File, query: string): Promise<Clip
       model: GEMINI_MODEL,
       contents: {
         parts: [
-          { inlineData: { mimeType: file.type, data: base64Data } },
+          { fileData: { mimeType: mimeType, fileUri: fileUri } },
           { text: searchPrompt }
         ]
       },

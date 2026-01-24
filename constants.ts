@@ -1,7 +1,7 @@
 // Using Gemini 3 Pro Preview as requested for best video understanding capabilities
 export const GEMINI_MODEL = 'gemini-3-pro-preview'; 
 
-export const MAX_FILE_SIZE_MB = 40; // Browser safety limit for base64 inline
+export const MAX_FILE_SIZE_MB = 200; // Increased to 2GB for File API support
 
 export const SAMPLE_PROMPT = `
 You are an expert video content analyzer specializing in identifying viral-worthy moments for short-form social media (TikTok, YouTube Shorts, Instagram Reels).
