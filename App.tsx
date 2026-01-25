@@ -405,256 +405,275 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col">
-      <video ref={processingVideoRef} className="fixed top-0 left-0 w-1 h-1 pointer-events-none opacity-0" muted crossOrigin="anonymous"/>
+    <div className="min-h-screen bg-[#0a0e1a] text-slate-50 flex flex-col relative overflow-hidden">
+      {/* Advanced Animated Background */}
+      <div className="fixed inset-0 pointer-events-none">
+        {/* Animated mesh gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-950/40 via-purple-950/40 to-pink-950/40" />
 
-      <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
-              SmartClip.ai
-            </h1>
-          </div>
-          {file && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
-        </div>
-      </header>
+        {/* Multiple floating orbs with different animations */}
+        <div className="absolute top-20 right-20 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px] animate-pulse" />
+        <div className="absolute bottom-40 left-40 w-80 h-80 bg-purple-500/20 rounded-full blur-[100px] animate-pulse" style={{animationDelay: '1.5s'}} />
+        <div className="absolute top-60 left-1/3 w-72 h-72 bg-pink-500/15 rounded-full blur-[90px] animate-pulse" style={{animationDelay: '3s'}} />
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-6 flex flex-col items-center">
-        {!file && (
-          <>
-            {/* Feature Showcase Section */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 max-w-6xl w-full">
-              {/* Card 1 */}
-              <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
-                <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <span className="text-2xl">🎯</span>
-                </div>
-                <div className="inline-block px-2 py-1 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold uppercase tracking-wider mb-2">
-                  Powered by Gemini 3
-                </div>
-                <h3 className="text-lg font-bold text-white mb-2">Viral Clip Discovery</h3>
-                <p className="text-sm text-slate-400 leading-relaxed">
-                  Gemini 3 Pro analyzes your video and extracts 5-15 clips with virality scores, focused on hooks and retention.
-                </p>
-              </div>
+        {/* Grid overlay */}
+        <div className="absolute inset-0" style={{backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(148,163,184,0.08) 1px, transparent 0)', backgroundSize: '40px 40px'}} />
 
-              {/* Card 2 */}
-              <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
-                 <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <span className="text-2xl">🎬</span>
-                </div>
-                <h3 className="text-lg font-bold text-white mb-2">Director Mode</h3>
-                <p className="text-sm text-slate-400 leading-relaxed mb-3">
-                  Edit with natural language. Just type commands to edit your video instantly.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Cinematic"</span>
-                  <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Remove ums"</span>
-                </div>
-              </div>
+        {/* Scanning line effect */}
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/5 to-transparent h-32 animate-scan" />
+      </div>
 
-              {/* Card 3 */}
-              <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
-                 <div className="w-10 h-10 rounded-full bg-pink-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <span className="text-2xl">📱</span>
-                </div>
-                <div className="inline-block px-2 py-1 rounded-full bg-pink-500/10 text-pink-400 text-[10px] font-bold uppercase tracking-wider mb-2">
-                  SEO Optimized
-                </div>
-                <h3 className="text-lg font-bold text-white mb-2">Smart Export</h3>
-                <p className="text-sm text-slate-400 leading-relaxed">
-                  Auto-generate YouTube metadata, titles, and tags. Export videos with baked-in edits and color grading.
-                </p>
-              </div>
-            </div>
+      <div className="relative z-10 flex flex-col flex-1 w-full">
+        <video ref={processingVideoRef} className="fixed top-0 left-0 w-1 h-1 pointer-events-none opacity-0" muted crossOrigin="anonymous"/>
 
-            {/* Upload Section */}
-            <div className="w-full max-w-4xl flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/30 hover:bg-slate-800/50 transition-colors p-10">
-              <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 shadow-inner">
-                <svg className="w-10 h-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+        <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
+          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </div>
-              <h2 className="text-2xl font-semibold mb-2">Upload your video</h2>
-              <p className="text-slate-400 mb-8 max-w-md text-center">Upload a video (max {MAX_FILE_SIZE_MB}MB) and let Gemini 3 Pro find the viral moments.</p>
-              <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange}/>
-              <Button onClick={() => fileInputRef.current?.click()} className="px-8 py-3 text-lg shadow-blue-500/20">Select Video File</Button>
-              {errorMsg && <div className="mt-4 p-3 bg-red-900/30 border border-red-800 text-red-200 rounded-lg text-sm">{errorMsg}</div>}
+              <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
+                SmartClip.ai
+              </h1>
             </div>
-          </>
-        )}
+            {file && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
+          </div>
+        </header>
 
-        {file && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)] w-full">
-            <div className="lg:col-span-2 flex flex-col gap-4">
-              <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl ring-1 ring-slate-800 aspect-video group">
-                {videoUrl && (
-                  <video 
-                    ref={videoRef} 
-                    src={videoUrl} 
-                    className="w-full h-full object-contain transition-all duration-500" 
-                    style={{ filter: virtualEdit?.filterStyle || 'none' }}
-                    controls 
-                    onTimeUpdate={handleTimeUpdate}
-                  />
-                )}
-                
-                {/* Transition Overlay */}
-                <div 
-                  className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 ${isTransitioning ? 'opacity-100' : 'opacity-0'}`}
-                />
-
-                {/* Visual Indicator for Active Virtual Edit / Director Mode */}
-                {virtualEdit && virtualEdit.isActive && (
-                  <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
-                    <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse">
-                      <span>🎬 Director Mode: {virtualEdit.description}</span>
-                      <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-black/20 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-                    </div>
-                    {/* Export Button for Edited Video */}
-                    <button 
-                      onClick={handleExportSmartEdit} 
-                      disabled={isExportingSmart}
-                      className="bg-white text-purple-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:bg-purple-100 transition-colors flex items-center gap-1 disabled:opacity-50"
-                    >
-                      {isExportingSmart ? (
-                        <>
-                          <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                           Export Video
-                        </>
-                      )}
-                    </button>
+        <main className="flex-1 max-w-7xl mx-auto w-full p-6 flex flex-col items-center">
+          {!file && (
+            <>
+              {/* Feature Showcase Section */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 max-w-6xl w-full">
+                {/* Card 1 */}
+                <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
+                  <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <span className="text-2xl">🎯</span>
                   </div>
-                )}
-
-                {(appState === AppState.ANALYZING || appState === AppState.UPLOADING) && (
-                  <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-10 flex-col">
-                    <div className="relative w-24 h-24 mb-4">
-                      <div className="absolute inset-0 border-t-4 border-blue-500 rounded-full animate-spin"></div>
-                      <div className="absolute inset-2 border-r-4 border-purple-500 rounded-full animate-spin animation-delay-150"></div>
-                      <div className="absolute inset-4 border-b-4 border-pink-500 rounded-full animate-spin animation-delay-300"></div>
-                    </div>
-                    <p className="text-lg font-semibold animate-pulse">{statusMessage}</p>
-                    <p className="text-sm text-slate-400 mt-2">{appState === AppState.UPLOADING ? "Sending video to Gemini..." : "Identifying viral moments..."}</p>
+                  <div className="inline-block px-2 py-1 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold uppercase tracking-wider mb-2">
+                    Powered by Gemini 3
                   </div>
-                )}
+                  <h3 className="text-lg font-bold text-white mb-2">Viral Clip Discovery</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">
+                    Gemini 3 Pro analyzes your video and extracts 5-15 clips with virality scores, focused on hooks and retention.
+                  </p>
+                </div>
+
+                {/* Card 2 */}
+                <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
+                   <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <span className="text-2xl">🎬</span>
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2">Director Mode</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed mb-3">
+                    Edit with natural language. Just type commands to edit your video instantly.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Cinematic"</span>
+                    <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Remove ums"</span>
+                  </div>
+                </div>
+
+                {/* Card 3 */}
+                <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
+                   <div className="w-10 h-10 rounded-full bg-pink-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                    <span className="text-2xl">📱</span>
+                  </div>
+                  <div className="inline-block px-2 py-1 rounded-full bg-pink-500/10 text-pink-400 text-[10px] font-bold uppercase tracking-wider mb-2">
+                    SEO Optimized
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2">Smart Export</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">
+                    Auto-generate YouTube metadata, titles, and tags. Export videos with baked-in edits and color grading.
+                  </p>
+                </div>
               </div>
 
-              {/* Info Bar / YouTube Metadata */}
-              {virtualEdit?.youtubeMetadata ? (
-                <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-5 rounded-xl border border-slate-700 shadow-xl">
-                  <div className="flex items-center justify-between mb-4">
-                     <h3 className="text-red-500 font-bold flex items-center gap-2"><svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg> YouTube Export Metadata</h3>
-                     <Button variant="secondary" className="text-xs py-1 px-3">Copy</Button>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs text-slate-500 uppercase font-semibold">Title</label>
-                      <p className="text-lg font-medium text-white">{virtualEdit.youtubeMetadata.title}</p>
+              {/* Upload Section */}
+              <div className="w-full max-w-4xl flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/30 hover:bg-slate-800/50 transition-colors p-10">
+                <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                  <svg className="w-10 h-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-semibold mb-2">Upload your video</h2>
+                <p className="text-slate-400 mb-8 max-w-md text-center">Upload a video (max {MAX_FILE_SIZE_MB}MB) and let Gemini 3 Pro find the viral moments.</p>
+                <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange}/>
+                <Button onClick={() => fileInputRef.current?.click()} className="px-8 py-3 text-lg shadow-blue-500/20">Select Video File</Button>
+                {errorMsg && <div className="mt-4 p-3 bg-red-900/30 border border-red-800 text-red-200 rounded-lg text-sm">{errorMsg}</div>}
+              </div>
+            </>
+          )}
+
+          {file && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)] w-full">
+              <div className="lg:col-span-2 flex flex-col gap-4">
+                <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl ring-1 ring-slate-800 aspect-video group">
+                  {videoUrl && (
+                    <video 
+                      ref={videoRef} 
+                      src={videoUrl} 
+                      className="w-full h-full object-contain transition-all duration-500" 
+                      style={{ filter: virtualEdit?.filterStyle || 'none' }}
+                      controls 
+                      onTimeUpdate={handleTimeUpdate}
+                    />
+                  )}
+                  
+                  {/* Transition Overlay */}
+                  <div 
+                    className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 ${isTransitioning ? 'opacity-100' : 'opacity-0'}`}
+                  />
+
+                  {/* Visual Indicator for Active Virtual Edit / Director Mode */}
+                  {virtualEdit && virtualEdit.isActive && (
+                    <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
+                      <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse">
+                        <span>🎬 Director Mode: {virtualEdit.description}</span>
+                        <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-black/20 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                      </div>
+                      {/* Export Button for Edited Video */}
+                      <button 
+                        onClick={handleExportSmartEdit} 
+                        disabled={isExportingSmart}
+                        className="bg-white text-purple-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:bg-purple-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {isExportingSmart ? (
+                          <>
+                            <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                             Export Video
+                          </>
+                        )}
+                      </button>
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 uppercase font-semibold">Description</label>
-                      <p className="text-sm text-slate-300 whitespace-pre-wrap">{virtualEdit.youtubeMetadata.description}</p>
+                  )}
+
+                  {(appState === AppState.ANALYZING || appState === AppState.UPLOADING) && (
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-10 flex-col">
+                      <div className="relative w-24 h-24 mb-4">
+                        <div className="absolute inset-0 border-t-4 border-blue-500 rounded-full animate-spin"></div>
+                        <div className="absolute inset-2 border-r-4 border-purple-500 rounded-full animate-spin animation-delay-150"></div>
+                        <div className="absolute inset-4 border-b-4 border-pink-500 rounded-full animate-spin animation-delay-300"></div>
+                      </div>
+                      <p className="text-lg font-semibold animate-pulse">{statusMessage}</p>
+                      <p className="text-sm text-slate-400 mt-2">{appState === AppState.UPLOADING ? "Sending video to Gemini..." : "Identifying viral moments..."}</p>
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 uppercase font-semibold">Tags</label>
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        {virtualEdit.youtubeMetadata.tags.map(tag => (
-                          <span key={tag} className="text-xs bg-slate-700/50 text-blue-300 px-2 py-1 rounded-full">#{tag}</span>
-                        ))}
+                  )}
+                </div>
+
+                {/* Info Bar / YouTube Metadata */}
+                {virtualEdit?.youtubeMetadata ? (
+                  <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-5 rounded-xl border border-slate-700 shadow-xl">
+                    <div className="flex items-center justify-between mb-4">
+                       <h3 className="text-red-500 font-bold flex items-center gap-2"><svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg> YouTube Export Metadata</h3>
+                       <Button variant="secondary" className="text-xs py-1 px-3">Copy</Button>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs text-slate-500 uppercase font-semibold">Title</label>
+                        <p className="text-lg font-medium text-white">{virtualEdit.youtubeMetadata.title}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-500 uppercase font-semibold">Description</label>
+                        <p className="text-sm text-slate-300 whitespace-pre-wrap">{virtualEdit.youtubeMetadata.description}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-500 uppercase font-semibold">Tags</label>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {virtualEdit.youtubeMetadata.tags.map(tag => (
+                            <span key={tag} className="text-xs bg-slate-700/50 text-blue-300 px-2 py-1 rounded-full">#{tag}</span>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                /* Default Info Bar */
-                <div className="flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700">
-                  <div>
-                    <h3 className="font-semibold text-slate-200 truncate max-w-md">{file.name}</h3>
-                    <p className="text-xs text-slate-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                  </div>
-                  {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
-                    <Button onClick={handleAnalyze} className="shadow-lg shadow-blue-500/20"><span className="mr-2">✨</span> Generate Clips</Button>
-                  )}
-                  {analysisData && <div className="text-sm text-slate-400">Found <span className="text-white font-bold">{analysisData.clips.length}</span> clips</div>}
-                </div>
-              )}
-
-              {analysisData?.overallSummary && !virtualEdit?.youtubeMetadata && (
-                <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Video Summary</h4>
-                  <p className="text-slate-300 text-sm leading-relaxed">{analysisData.overallSummary}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="lg:col-span-1 bg-slate-800/30 rounded-2xl border border-slate-700/50 flex flex-col overflow-hidden">
-              <div className="p-4 border-b border-slate-700 bg-slate-800/80 backdrop-blur">
-                <form onSubmit={handleCommand} className="relative">
-                  <input
-                    type="text"
-                    placeholder="Search OR 'Make it cinematic...'"
-                    className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-4 pr-10 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500 transition-all"
-                    value={searchState.query}
-                    onChange={(e) => setSearchState(prev => ({ ...prev, query: e.target.value }))}
-                    disabled={searchState.isSearching || appState === AppState.ANALYZING || appState === AppState.UPLOADING}
-                  />
-                  <button type="submit" disabled={searchState.isSearching || !searchState.query.trim()} className="absolute right-1.5 top-1.5 p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    {searchState.isSearching ? (
-                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                ) : (
+                  /* Default Info Bar */
+                  <div className="flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700">
+                    <div>
+                      <h3 className="font-semibold text-slate-200 truncate max-w-md">{file.name}</h3>
+                      <p className="text-xs text-slate-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                    </div>
+                    {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
+                      <Button onClick={handleAnalyze} className="shadow-lg shadow-blue-500/20"><span className="mr-2">✨</span> Generate Clips</Button>
                     )}
-                  </button>
-                </form>
-                {searchState.error && <p className="text-xs text-red-400 mt-2 ml-1">{searchState.error}</p>}
-                <div className="mt-2 flex gap-2 flex-wrap">
-                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Try:</span>
-                  <button onClick={() => setSearchState(p => ({...p, query: "Make it look cinematic & professional"}))} className="text-[10px] text-purple-400 hover:text-purple-300 bg-purple-900/20 px-1.5 py-0.5 rounded border border-purple-900/50 transition-colors">"Cinematic Look"</button>
-                  <button onClick={() => setSearchState(p => ({...p, query: "Remove silences and ums"}))} className="text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/50 transition-colors">"Remove 'um'"</button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                {appState === AppState.ERROR && (
-                   <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg text-red-200 text-sm">
-                     {errorMsg}
-                     <Button variant="secondary" onClick={handleAnalyze} className="w-full mt-3">Retry Analysis</Button>
-                   </div>
-                )}
-                {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-500 opacity-60">
-                     <svg className="w-12 h-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                     </svg>
-                     <p className="text-sm">Ready to analyze audio & video</p>
+                    {analysisData && <div className="text-sm text-slate-400">Found <span className="text-white font-bold">{analysisData.clips.length}</span> clips</div>}
                   </div>
                 )}
-                {analysisData && analysisData.clips.map((clip) => (
-                  <ClipCard 
-                    key={clip.id} 
-                    clip={clip} 
-                    isActive={activeClipId === clip.id}
-                    isDownloading={downloadingClipId === clip.id}
-                    onClick={() => playClip(clip)}
-                    onDownload={(e) => handleDownloadClip(e, clip)}
-                  />
-                ))}
+
+                {analysisData?.overallSummary && !virtualEdit?.youtubeMetadata && (
+                  <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Video Summary</h4>
+                    <p className="text-slate-300 text-sm leading-relaxed">{analysisData.overallSummary}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="lg:col-span-1 bg-slate-800/30 rounded-2xl border border-slate-700/50 flex flex-col overflow-hidden">
+                <div className="p-4 border-b border-slate-700 bg-slate-800/80 backdrop-blur">
+                  <form onSubmit={handleCommand} className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search OR 'Make it cinematic...'"
+                      className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-4 pr-10 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500 transition-all"
+                      value={searchState.query}
+                      onChange={(e) => setSearchState(prev => ({ ...prev, query: e.target.value }))}
+                      disabled={searchState.isSearching || appState === AppState.ANALYZING || appState === AppState.UPLOADING}
+                    />
+                    <button type="submit" disabled={searchState.isSearching || !searchState.query.trim()} className="absolute right-1.5 top-1.5 p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                      {searchState.isSearching ? (
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                      )}
+                    </button>
+                  </form>
+                  {searchState.error && <p className="text-xs text-red-400 mt-2 ml-1">{searchState.error}</p>}
+                  <div className="mt-2 flex gap-2 flex-wrap">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Try:</span>
+                    <button onClick={() => setSearchState(p => ({...p, query: "Make it look cinematic & professional"}))} className="text-[10px] text-purple-400 hover:text-purple-300 bg-purple-900/20 px-1.5 py-0.5 rounded border border-purple-900/50 transition-colors">"Cinematic Look"</button>
+                    <button onClick={() => setSearchState(p => ({...p, query: "Remove silences and ums"}))} className="text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/50 transition-colors">"Remove 'um'"</button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                  {appState === AppState.ERROR && (
+                     <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg text-red-200 text-sm">
+                       {errorMsg}
+                       <Button variant="secondary" onClick={handleAnalyze} className="w-full mt-3">Retry Analysis</Button>
+                     </div>
+                  )}
+                  {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-500 opacity-60">
+                       <svg className="w-12 h-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                       </svg>
+                       <p className="text-sm">Ready to analyze audio & video</p>
+                    </div>
+                  )}
+                  {analysisData && analysisData.clips.map((clip) => (
+                    <ClipCard 
+                      key={clip.id} 
+                      clip={clip} 
+                      isActive={activeClipId === clip.id}
+                      isDownloading={downloadingClipId === clip.id}
+                      onClick={() => playClip(clip)}
+                      onDownload={(e) => handleDownloadClip(e, clip)}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </main>
+          )}
+        </main>
+      </div>
     </div>
   );
 };

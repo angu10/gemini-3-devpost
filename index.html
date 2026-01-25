@@ -26,6 +26,15 @@
       .custom-scrollbar::-webkit-scrollbar-thumb:hover {
         background: #64748b; 
       }
+      
+      /* Scanning line animation */
+      @keyframes scan {
+        0%, 100% { transform: translateY(-100%); }
+        50% { transform: translateY(100vh); }
+      }
+      .animate-scan {
+        animation: scan 8s linear infinite;
+      }
     </style>
   <script type="importmap">
 {
