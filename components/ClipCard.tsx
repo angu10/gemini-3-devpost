@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Clip } from '../types';
 
@@ -52,6 +53,17 @@ export const ClipCard: React.FC<ClipCardProps> = ({
       <p className="text-xs text-slate-400 line-clamp-2 mb-2">
         {clip.description}
       </p>
+
+      {/* Tags Section */}
+      {clip.tags && clip.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {clip.tags.slice(0, 3).map((tag, idx) => (
+            <span key={idx} className="text-[10px] text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded-full border border-blue-500/20">
+              #{tag.replace(/^#/, '')}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center justify-between text-xs text-slate-500">
         <div className="flex items-center space-x-2">

@@ -1,3 +1,4 @@
+
 // Using Gemini 3 Pro Preview as requested for best video understanding capabilities
 export const GEMINI_MODEL = 'gemini-3-pro-preview'; 
 
@@ -29,6 +30,7 @@ REQUIREMENTS:
 - Titles should be engaging but ACCURATE (not misleading)
 - Include an overall 1-2 sentence video summary
 - Analyze both visual content AND audio/speech
+- GENERATE 3-5 VIRAL HASHTAGS (tags) for each clip for SEO optimization
 
 CATEGORIES:
 - Funny: Humor, jokes, comedic moments

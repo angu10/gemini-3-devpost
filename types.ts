@@ -7,6 +7,7 @@ export interface Clip {
   endTime: number; // in seconds
   viralityScore: number; // 1-10
   category: 'Funny' | 'Insightful' | 'Action' | 'Emotional' | 'Summary' | 'Other' | 'Custom';
+  tags: string[]; // SEO Hashtags
 }
 
 export interface VideoMetadata {

@@ -71,9 +71,14 @@ export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<A
               category: { 
                 type: Type.STRING, 
                 enum: ['Funny', 'Insightful', 'Action', 'Emotional', 'Summary', 'Other'] 
+              },
+              tags: { 
+                type: Type.ARRAY, 
+                items: { type: Type.STRING },
+                description: "3-5 viral hashtags for this clip" 
               }
             },
-            required: ['title', 'description', 'startTime', 'endTime', 'viralityScore', 'category']
+            required: ['title', 'description', 'startTime', 'endTime', 'viralityScore', 'category', 'tags']
           }
         },
         overallSummary: { type: Type.STRING }
@@ -147,11 +152,12 @@ export const processUserCommand = async (
       IF SEARCH/FIND:
       - Return 'intent': 'SEARCH' and the single best clip.
 
-      IF EDIT/MODIFY (e.g. "Remove ums", "Make it cinematic", "Export for YouTube"):
+      IF EDIT/MODIFY (e.g. "Remove ums", "Remove filler words", "Make it cinematic", "Export for YouTube"):
       - Return 'intent': 'EDIT'.
       - 'keepSegments': List of time ranges to KEEP. 
+         * CRITICAL: If the user asks to "Remove filler words", "Remove ums", or "Remove silences", you MUST identify the timestamps of those errors and return the COMPLEMENT (the parts to keep).
+         * Example: If "um" is at 0:05-0:07, keepSegments should be [{start: 0, end: 5}, {start: 7, end: duration}].
          * If the user only asks for style (e.g. "Make it black and white"), return the FULL video duration as one segment (0 to duration).
-         * If the user asks to remove things, calculate the cuts.
       - 'filterStyle': Generate a CSS filter string if requested (e.g. "grayscale(1) contrast(1.2)" for noir, "saturate(1.3) contrast(1.1)" for vibrant). Default to null.
       - 'transitionEffect': If the user mentions transitions or "professional" editing, pick one: 'FADE_BLACK', 'FLASH_WHITE', 'ZOOM'. Default to null.
       - 'youtubeMetadata': If the user mentions "Export", "YouTube", "Title", or "SEO", generate optimized metadata.
@@ -177,7 +183,8 @@ export const processUserCommand = async (
             startTime: { type: Type.NUMBER },
             endTime: { type: Type.NUMBER },
             viralityScore: { type: Type.NUMBER },
-            category: { type: Type.STRING, enum: ['Custom'] }
+            category: { type: Type.STRING, enum: ['Custom'] },
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } }
           }
         },
         // For EDIT (Director Mode)
@@ -238,18 +245,13 @@ export const processUserCommand = async (
     }
 
     if (result.intent === 'EDIT') {
-      // If AI didn't return segments (e.g. just asked for style), assume we keep the whole video?
-      // Actually the prompt instructs to return full duration, but let's be safe.
-      // We'll handle empty segments in the UI or here. 
-      // For now, assume Gemini follows instructions.
-      
       return {
         type: 'EDIT',
         data: {
           description: result.editDescription || query,
           keepSegments: result.keepSegments && result.keepSegments.length > 0 
             ? result.keepSegments.sort((a: TimeRange, b: TimeRange) => a.start - b.start) 
-            : [], // Empty array might imply "keep original" or "keep nothing", handled in App.tsx
+            : [], 
           filterStyle: result.filterStyle,
           transitionEffect: result.transitionEffect,
           youtubeMetadata: result.youtubeMetadata

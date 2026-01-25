@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [downloadingClipId, setDownloadingClipId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
+  const [isExportingSmart, setIsExportingSmart] = useState<boolean>(false);
   
   // Smart Features State
   const [searchState, setSearchState] = useState<SearchState>({ isSearching: false, query: '' });
@@ -111,9 +112,6 @@ const App: React.FC = () => {
       else if (result.type === 'EDIT') {
         // Handle Virtual Edit / Director Mode
         
-        // If keepSegments is empty, implies "Keep Everything" or logic error.
-        // If the intent was "Make it black and white", we want to keep the whole video.
-        // We'll fallback to [0, duration] if segments are missing but style/metadata exists.
         let finalSegments = result.data.keepSegments;
         if ((!finalSegments || finalSegments.length === 0) && videoRef.current) {
             finalSegments = [{ start: 0, end: videoRef.current.duration }];
@@ -156,6 +154,109 @@ const App: React.FC = () => {
   const triggerTransition = () => {
     setIsTransitioning(true);
     setTimeout(() => setIsTransitioning(false), 800); // 800ms transition duration
+  };
+
+  /**
+   * Export Smart Edited Video
+   * Records the playback of the segments, applying filters, effectively "deleting" the removed parts from the output file.
+   */
+  const handleExportSmartEdit = async () => {
+    if (!virtualEdit || !videoUrl || isExportingSmart) return;
+    setIsExportingSmart(true);
+
+    const workerVideo = processingVideoRef.current;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    if (!workerVideo || !ctx) {
+      setIsExportingSmart(false);
+      return;
+    }
+
+    // Setup Video
+    workerVideo.src = videoUrl;
+    await new Promise(r => workerVideo.onloadedmetadata = r);
+    
+    canvas.width = workerVideo.videoWidth;
+    canvas.height = workerVideo.videoHeight;
+
+    // Setup Recorder
+    const stream = canvas.captureStream(30); // 30 FPS
+    
+    // Add audio track to stream
+    const audioCtx = new AudioContext();
+    const source = audioCtx.createMediaElementSource(workerVideo);
+    const dest = audioCtx.createMediaStreamDestination();
+    source.connect(dest);
+    stream.addTrack(dest.stream.getAudioTracks()[0]);
+
+    const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+    const chunks: BlobPart[] = [];
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+    // Draw loop (Apply CSS filters here)
+    let animationFrameId: number;
+    const draw = () => {
+      if (virtualEdit.filterStyle) {
+        ctx.filter = virtualEdit.filterStyle;
+      }
+      ctx.drawImage(workerVideo, 0, 0, canvas.width, canvas.height);
+      animationFrameId = requestAnimationFrame(draw);
+    };
+
+    mediaRecorder.onstop = () => {
+      cancelAnimationFrame(animationFrameId);
+      audioCtx.close();
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `smart_edit_${Date.now()}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setIsExportingSmart(false);
+      
+      // Cleanup
+      workerVideo.pause();
+      workerVideo.src = "";
+    };
+
+    mediaRecorder.start();
+    draw();
+
+    // Playback Logic: Iterate through segments
+    try {
+      for (const segment of virtualEdit.keepSegments) {
+        workerVideo.currentTime = segment.start;
+        // Wait for seek
+        await new Promise<void>(resolve => {
+           const onSeek = () => { workerVideo.removeEventListener('seeked', onSeek); resolve(); };
+           workerVideo.addEventListener('seeked', onSeek);
+        });
+        
+        await workerVideo.play();
+        
+        // Wait until end of segment
+        await new Promise<void>(resolve => {
+          const checkTime = () => {
+            if (workerVideo.currentTime >= segment.end) {
+               workerVideo.pause();
+               resolve();
+            } else {
+               requestAnimationFrame(checkTime);
+            }
+          };
+          checkTime();
+        });
+      }
+      mediaRecorder.stop();
+    } catch (e) {
+      console.error("Export failed", e);
+      mediaRecorder.stop();
+      setIsExportingSmart(false);
+    }
   };
 
   const handleDownloadClip = async (e: React.MouseEvent, clip: Clip) => {
@@ -323,26 +424,73 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full p-6">
+      <main className="flex-1 max-w-7xl mx-auto w-full p-6 flex flex-col items-center">
         {!file && (
-          <div className="h-[calc(100vh-10rem)] flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/30 hover:bg-slate-800/50 transition-colors">
-            <div className="text-center p-10">
-              <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
+          <>
+            {/* Feature Showcase Section */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 max-w-6xl w-full">
+              {/* Card 1 */}
+              <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
+                <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <span className="text-2xl">🎯</span>
+                </div>
+                <div className="inline-block px-2 py-1 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold uppercase tracking-wider mb-2">
+                  Powered by Gemini 3
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Viral Clip Discovery</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">
+                  Gemini 3 Pro analyzes your video and extracts 5-15 clips with virality scores, focused on hooks and retention.
+                </p>
+              </div>
+
+              {/* Card 2 */}
+              <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
+                 <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <span className="text-2xl">🎬</span>
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Director Mode</h3>
+                <p className="text-sm text-slate-400 leading-relaxed mb-3">
+                  Edit with natural language. Just type commands to edit your video instantly.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Cinematic"</span>
+                  <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Remove ums"</span>
+                </div>
+              </div>
+
+              {/* Card 3 */}
+              <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
+                 <div className="w-10 h-10 rounded-full bg-pink-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <span className="text-2xl">📱</span>
+                </div>
+                <div className="inline-block px-2 py-1 rounded-full bg-pink-500/10 text-pink-400 text-[10px] font-bold uppercase tracking-wider mb-2">
+                  SEO Optimized
+                </div>
+                <h3 className="text-lg font-bold text-white mb-2">Smart Export</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">
+                  Auto-generate YouTube metadata, titles, and tags. Export videos with baked-in edits and color grading.
+                </p>
+              </div>
+            </div>
+
+            {/* Upload Section */}
+            <div className="w-full max-w-4xl flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/30 hover:bg-slate-800/50 transition-colors p-10">
+              <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 shadow-inner">
                 <svg className="w-10 h-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
               </div>
               <h2 className="text-2xl font-semibold mb-2">Upload your video</h2>
-              <p className="text-slate-400 mb-8 max-w-md mx-auto">Upload a video (max {MAX_FILE_SIZE_MB}MB) and let Gemini 3 Pro find the viral moments.</p>
+              <p className="text-slate-400 mb-8 max-w-md text-center">Upload a video (max {MAX_FILE_SIZE_MB}MB) and let Gemini 3 Pro find the viral moments.</p>
               <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange}/>
               <Button onClick={() => fileInputRef.current?.click()} className="px-8 py-3 text-lg shadow-blue-500/20">Select Video File</Button>
               {errorMsg && <div className="mt-4 p-3 bg-red-900/30 border border-red-800 text-red-200 rounded-lg text-sm">{errorMsg}</div>}
             </div>
-          </div>
+          </>
         )}
 
         {file && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)] w-full">
             <div className="lg:col-span-2 flex flex-col gap-4">
               <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl ring-1 ring-slate-800 aspect-video group">
                 {videoUrl && (
@@ -363,9 +511,29 @@ const App: React.FC = () => {
 
                 {/* Visual Indicator for Active Virtual Edit / Director Mode */}
                 {virtualEdit && virtualEdit.isActive && (
-                  <div className="absolute top-4 right-4 bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse z-20">
-                     <span>🎬 Director Mode: {virtualEdit.description}</span>
-                     <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-black/20 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                  <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
+                    <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse">
+                      <span>🎬 Director Mode: {virtualEdit.description}</span>
+                      <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-black/20 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+                    </div>
+                    {/* Export Button for Edited Video */}
+                    <button 
+                      onClick={handleExportSmartEdit} 
+                      disabled={isExportingSmart}
+                      className="bg-white text-purple-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:bg-purple-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {isExportingSmart ? (
+                        <>
+                          <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                           Export Video
+                        </>
+                      )}
+                    </button>
                   </div>
                 )}
 
