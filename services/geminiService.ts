@@ -50,9 +50,75 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
 };
 
 /**
- * Analyzes the video using the File URI (Server Reference).
+ * Helper to parse clips from accumulating JSON string
  */
-export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<AnalysisResponse> => {
+const parseClipsFromStream = (text: string): Clip[] => {
+  const clips: Clip[] = [];
+  const clipsStartIndex = text.indexOf('"clips":');
+  if (clipsStartIndex === -1) return [];
+
+  // Find start of array
+  const arrayStart = text.indexOf('[', clipsStartIndex);
+  if (arrayStart === -1) return [];
+
+  let braceCount = 0;
+  let inString = false;
+  let escape = false;
+  let objectStart = -1;
+
+  for (let i = arrayStart + 1; i < text.length; i++) {
+    const char = text[i];
+    
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+    }
+
+    if (!inString) {
+      if (char === '{') {
+        if (braceCount === 0) objectStart = i;
+        braceCount++;
+      } else if (char === '}') {
+        braceCount--;
+        if (braceCount === 0 && objectStart !== -1) {
+          // Found potential complete object
+          const jsonStr = text.substring(objectStart, i + 1);
+          try {
+            const clip = JSON.parse(jsonStr);
+            if (clip.title && clip.startTime !== undefined && clip.endTime !== undefined) {
+               clips.push(clip);
+            }
+          } catch (e) {
+            // Ignore incomplete or malformed objects during stream
+          }
+          objectStart = -1;
+        }
+      } else if (char === ']') {
+        // End of array
+        break;
+      }
+    }
+  }
+  return clips;
+};
+
+/**
+ * Analyzes the video using the File URI (Server Reference) with Streaming.
+ */
+export const analyzeVideo = async (
+  fileUri: string, 
+  mimeType: string,
+  onPartialUpdate?: (clips: Clip[]) => void
+): Promise<AnalysisResponse> => {
   try {
     // Schema for structured JSON output
     const responseSchema = {
@@ -86,7 +152,7 @@ export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<A
       required: ['clips', 'overallSummary']
     };
 
-    const response = await ai.models.generateContent({
+    const streamResult = await ai.models.generateContentStream({
       model: GEMINI_MODEL,
       contents: {
         parts: [
@@ -108,16 +174,32 @@ export const analyzeVideo = async (fileUri: string, mimeType: string): Promise<A
       }
     });
 
-    const text = response.text;
-    if (!text) {
-      throw new Error("No response from Gemini");
+    let fullText = '';
+    let lastClipCount = 0;
+
+    for await (const chunk of streamResult) {
+      fullText += chunk.text;
+      
+      if (onPartialUpdate) {
+        const foundClips = parseClipsFromStream(fullText);
+        if (foundClips.length > lastClipCount) {
+          // Add IDs to ensure React stability
+          const clipsWithIds = foundClips.map((c, i) => ({
+            ...c,
+            id: `clip-${i}-${fileUri.slice(-4)}` // Stable ID based on index
+          }));
+          onPartialUpdate(clipsWithIds);
+          lastClipCount = foundClips.length;
+        }
+      }
     }
 
-    const data = JSON.parse(text) as AnalysisResponse;
+    const data = JSON.parse(fullText) as AnalysisResponse;
     
+    // Final pass to ensure all properties (like overallSummary) are set
     data.clips = data.clips.map((clip, index) => ({
       ...clip,
-      id: `clip-${index}-${Date.now()}`
+      id: `clip-${index}-${fileUri.slice(-4)}`
     }));
 
     return data;

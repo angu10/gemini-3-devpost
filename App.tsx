@@ -4,7 +4,7 @@ import { Clip, AppState, AnalysisResponse, SearchState, VirtualEdit } from './ty
 import { MAX_FILE_SIZE_MB } from './constants';
 import { analyzeVideo, processUserCommand, uploadVideo } from './services/geminiService';
 import { Button } from './components/Button';
-import { ClipCard } from './components/ClipCard';
+import { ClipCard, SkeletonClipCard } from './components/ClipCard';
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -74,11 +74,22 @@ const App: React.FC = () => {
   const handleAnalyze = async () => {
     if (!file) return;
     setErrorMsg(null);
+    
+    // Reset Analysis Data but keep placeholders ready
+    setAnalysisData({ clips: [], overallSummary: '' });
+
     try {
       const uri = await ensureFileUploaded(file);
       setAppState(AppState.ANALYZING);
       setStatusMessage("Identifying viral clips...");
-      const data = await analyzeVideo(uri, file.type);
+      
+      const data = await analyzeVideo(uri, file.type, (partialClips) => {
+        setAnalysisData(prev => ({
+          overallSummary: prev?.overallSummary || '',
+          clips: partialClips
+        }));
+      });
+      
       setAnalysisData(data);
       setAppState(AppState.READY);
     } catch (err: any) {
@@ -428,15 +439,19 @@ const App: React.FC = () => {
 
         <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
+                  SmartClip.ai
+                </h1>
               </div>
-              <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
-                SmartClip.ai
-              </h1>
+              <div className="hidden md:block h-6 w-px bg-slate-700"></div>
+              <p className="hidden md:block text-sm text-slate-400 font-medium italic">Talk to your video. Watch it transform.</p>
             </div>
             {file && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
           </div>
@@ -668,6 +683,12 @@ const App: React.FC = () => {
                       onDownload={(e) => handleDownloadClip(e, clip)}
                     />
                   ))}
+                  {/* Loading State for Streamed Clips */}
+                  {appState === AppState.ANALYZING && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <SkeletonClipCard />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
