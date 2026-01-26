@@ -23,8 +23,6 @@ export const ClipCard: React.FC<ClipCardProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const scoreColor = clip.viralityScore >= 8 ? 'text-green-400' : clip.viralityScore >= 5 ? 'text-yellow-400' : 'text-slate-400';
-
   return (
     <div 
       onClick={onClick}
@@ -45,9 +43,6 @@ export const ClipCard: React.FC<ClipCardProps> = ({
         <h3 className={`font-semibold text-sm ${isActive ? 'text-blue-200' : 'text-slate-100'} pr-8`}>
           {clip.title}
         </h3>
-        <span className={`text-xs font-bold ${scoreColor} bg-slate-900/50 px-2 py-0.5 rounded ml-2 whitespace-nowrap`}>
-          ★ {clip.viralityScore}/10
-        </span>
       </div>
 
       <p className="text-xs text-slate-400 line-clamp-2 mb-2">
@@ -111,7 +106,6 @@ export const SkeletonClipCard: React.FC = () => {
     <div className="p-4 rounded-xl border border-slate-800 bg-slate-800/50 animate-pulse relative">
       <div className="flex justify-between items-start mb-3">
         <div className="h-4 bg-slate-700 rounded w-2/3"></div>
-        <div className="h-4 bg-slate-700 rounded w-12"></div>
       </div>
       <div className="space-y-2 mb-4">
         <div className="h-2 bg-slate-700/50 rounded w-full"></div>

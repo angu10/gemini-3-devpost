@@ -22,18 +22,13 @@ Look for moments that are:
 - Complete: Understandable without watching the full video.
 - Clear: Good audio/visual hooks in the first few seconds.
 
-SCORING (1-10):
-- 8-10: Excellent - Must watch (Funny, profound, or very exciting).
-- 5-7: Good - Useful or entertaining.
-- 1-4: Average - Informative but dry.
-- Prioritize clips with viralityScore >= 7.
-- Return 5-10 clips if most segments are average (score < 6).
-- Return 10-15 clips if video has many excellent moments (score >= 8).
+SELECTION GUIDELINES:
+- Return 5-10 clips if most segments are average.
+- Return 10-15 clips if video has many excellent moments.
 
 REQUIREMENTS:
 - **timestamps**: Must be in SECONDS (number). Example: 15.5.
 - **startTime** and **endTime**: Must be POSITIVE numbers greater than 0.
-- **viralityScore**: Must be an INTEGER between 1 and 10.
 - Each clip must be 15-60 seconds in duration.
 - Clips must NOT overlap in timestamps.
 - Titles should be engaging but ACCURATE.

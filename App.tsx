@@ -290,7 +290,6 @@ const App: React.FC = () => {
          if (!clip.title) clip.title = "Found Clip";
          if (!clip.tags) clip.tags = ["Search Result"];
          if (!clip.category) clip.category = "Custom"; // Changed from "Other" to "Custom" so it persists
-         if (clip.viralityScore === undefined || clip.viralityScore === null) clip.viralityScore = 5;
 
          // Sanitize timestamps
          if (typeof clip.startTime !== 'number' || !Number.isFinite(clip.startTime)) clip.startTime = 0;
@@ -743,7 +742,7 @@ const App: React.FC = () => {
                           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                        </div>
                        <h3 className="text-lg font-bold text-white mb-2">Auto-Discovery</h3>
-                       <p className="text-slate-400 text-sm leading-relaxed">Instantly identifies best moments, providing titles, scores, and reasoning.</p>
+                       <p className="text-slate-400 text-sm leading-relaxed">Instantly identifies best moments, providing titles and reasoning.</p>
                     </div>
                     <div className="bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
                        <div className="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-purple-400">
@@ -838,7 +837,6 @@ const App: React.FC = () => {
                               <p className="text-sm font-medium truncate">{clip.title}</p>
                               <div className="flex justify-between text-[10px] text-slate-400 mt-1">
                                 <span>{Math.round(clip.endTime - clip.startTime)}s</span>
-                                <span className={clip.viralityScore >= 8 ? "text-green-400" : "text-blue-400"}>Score: {clip.viralityScore}</span>
                               </div>
                               {/* Download Button on Clip */}
                               <button 

@@ -10,7 +10,6 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const sanitizeClip = (clip: any): Clip => {
     let start = Number(clip.startTime);
     let end = Number(clip.endTime);
-    let score = Number(clip.viralityScore);
 
     // Fix Timestamps
     if (!Number.isFinite(start) || start < 0) start = 0;
@@ -18,20 +17,6 @@ const sanitizeClip = (clip: any): Clip => {
     // If end is missing, invalid, or less than start, give it a default duration (15s)
     if (!Number.isFinite(end) || end <= start) {
         end = start + 15;
-    }
-
-    // Fix Score: Handle weird hallucinations like 0.00008 or >10
-    if (!Number.isFinite(score)) {
-        score = 5;
-    } else {
-        // If score is normalized (0.0 to 1.0), scale it up. 
-        if (score > 0 && score <= 1) {
-            score = Math.round(score * 10);
-        }
-        // Clamp 1-10
-        if (score < 1) score = 1;
-        if (score > 10) score = 10;
-        score = Math.round(score);
     }
 
     // Ensure strings
@@ -46,7 +31,6 @@ const sanitizeClip = (clip: any): Clip => {
         description,
         startTime: start,
         endTime: end,
-        viralityScore: score,
         category,
         tags
     };
@@ -111,11 +95,10 @@ export const analyzeVideo = async (
             description: { type: Type.STRING },
             startTime: { type: Type.NUMBER },
             endTime: { type: Type.NUMBER },
-            viralityScore: { type: Type.INTEGER }, // Changed from NUMBER to INTEGER
             category: { type: Type.STRING, enum: ['Funny', 'Insightful', 'Action', 'Emotional', 'Summary', 'Other', 'Custom'] },
             tags: { type: Type.ARRAY, items: { type: Type.STRING } },
           },
-          required: ['id', 'title', 'description', 'startTime', 'endTime', 'viralityScore', 'category', 'tags'],
+          required: ['id', 'title', 'description', 'startTime', 'endTime', 'category', 'tags'],
         },
       },
     },
@@ -150,8 +133,6 @@ export const analyzeVideo = async (
   }
   
   // Truncate long floats for timestamps (e.g. 123.456789 -> 123.456)
-  // We no longer strictly regex replace viralityScore here because Type.INTEGER handles it,
-  // but we keep the timestamp cleaner for safety.
   fixedText = fixedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
 
   let result: AnalysisResponse;
@@ -201,7 +182,6 @@ export const processUserCommand = async (
     - SECOND: If NOT found, ANALYZE VIDEO FILE.
       - Create NEW Clip in 'data'.
       - **CRITICAL**: Accurate 'startTime' and 'endTime' (POSITIVE SECONDS).
-      - 'viralityScore' must be INTEGER (1-10).
   
   - REEL_ADD: User wants to create sequence/add clips.
     - If existingClips.length > 0 and user wants "all": return data: { all: true }.
@@ -232,7 +212,6 @@ export const processUserCommand = async (
             title: { type: Type.STRING, nullable: true },
             startTime: { type: Type.NUMBER, nullable: true },
             endTime: { type: Type.NUMBER, nullable: true },
-            viralityScore: { type: Type.INTEGER, nullable: true }, // Changed from NUMBER to INTEGER
             description: { type: Type.STRING, nullable: true },
             filterStyle: { type: Type.STRING, nullable: true },
             index: { type: Type.NUMBER, nullable: true },
@@ -258,7 +237,6 @@ export const processUserCommand = async (
                         title: { type: Type.STRING },
                         startTime: { type: Type.NUMBER },
                         endTime: { type: Type.NUMBER },
-                        viralityScore: { type: Type.INTEGER }, // Changed from NUMBER to INTEGER
                         description: { type: Type.STRING },
                         tags: { type: Type.ARRAY, items: { type: Type.STRING } },
                         category: { type: Type.STRING, nullable: true }
