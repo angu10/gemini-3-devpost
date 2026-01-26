@@ -123,13 +123,24 @@ const App: React.FC = () => {
       setStatusMessage("Finding best moments...");
       
       const data = await analyzeVideo(uri, file.type, selectedModel, (partialClips) => {
-        setAnalysisData(prev => ({
-          overallSummary: prev?.overallSummary || '',
-          clips: partialClips
-        }));
+        setAnalysisData(prev => {
+           // Preserve custom clips during streaming updates
+           const customClips = prev?.clips.filter(c => c.category === 'Custom') || [];
+           return {
+             overallSummary: prev?.overallSummary || '',
+             clips: [...customClips, ...partialClips]
+           };
+        });
       });
       
-      setAnalysisData(data);
+      setAnalysisData(prev => {
+         const customClips = prev?.clips.filter(c => c.category === 'Custom') || [];
+         return {
+            ...data,
+            clips: [...customClips, ...data.clips]
+         };
+      });
+      
       setHasPerformedFullAnalysis(true);
       setAppState(AppState.READY);
       setChatHistory(prev => [...prev, {
@@ -278,7 +289,7 @@ const App: React.FC = () => {
          if (!clip.id) clip.id = `search-${Date.now()}`;
          if (!clip.title) clip.title = "Found Clip";
          if (!clip.tags) clip.tags = ["Search Result"];
-         if (!clip.category) clip.category = "Other";
+         if (!clip.category) clip.category = "Custom"; // Changed from "Other" to "Custom" so it persists
          if (clip.viralityScore === undefined || clip.viralityScore === null) clip.viralityScore = 5;
 
          // Sanitize timestamps
@@ -463,8 +474,14 @@ const App: React.FC = () => {
   const handleExportReel = async () => {
     if (reel.length === 0 || !videoUrl || isExportingSmart) return;
     setIsExportingSmart(true);
-    await processAndDownload(reel, `highlight_reel_${Date.now()}.webm`);
-    setIsExportingSmart(false);
+    try {
+      await processAndDownload(reel, `highlight_reel_${Date.now()}.webm`);
+    } catch (error) {
+      console.error("Export failed:", error);
+      alert("Export failed. Please try again.");
+    } finally {
+      setIsExportingSmart(false);
+    }
   };
 
   const processAndDownload = async (clipsToProcess: Clip[], filename: string) => {
@@ -482,7 +499,7 @@ const App: React.FC = () => {
     
     if (!ctx) {
         if (document.body.contains(workerVideo)) document.body.removeChild(workerVideo);
-        return;
+        throw new Error("Could not create canvas context");
     }
 
     // Wait for metadata to load so we have dimensions
@@ -493,7 +510,7 @@ const App: React.FC = () => {
     }).catch(e => {
         console.error(e);
         if (document.body.contains(workerVideo)) document.body.removeChild(workerVideo);
-        return; 
+        throw new Error("Failed to load video");
     });
 
     canvas.width = workerVideo.videoWidth;
