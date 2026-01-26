@@ -424,7 +424,7 @@ const App: React.FC = () => {
                       <p className="text-slate-400 mb-8 max-w-md text-center">Drag & drop or select a video (max {MAX_FILE_SIZE_MB}MB).</p>
                       <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange}/>
                       <Button onClick={() => fileInputRef.current?.click()} className="px-8 py-3 text-lg shadow-blue-500/20 w-48">Select Video</Button>
-                      <p className="mt-4 text-xs text-slate-500">Powered by Gemini 1.5 Pro • 1M+ Context Window</p>
+                      <p className="mt-4 text-xs text-slate-500">Powered by Gemini 3 Pro • 2M+ Context Window</p>
                     </div>
                  </div>
 
