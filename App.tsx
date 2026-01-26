@@ -201,11 +201,18 @@ const App: React.FC = () => {
             clipsToAdd = result.data.clips.map((c: any) => ({
                 ...c,
                 id: c.id || `gen-${Date.now()}-${Math.random()}`,
+                startTime: typeof c.startTime === 'number' && Number.isFinite(c.startTime) ? c.startTime : 0,
+                endTime: typeof c.endTime === 'number' && Number.isFinite(c.endTime) ? c.endTime : 0,
                 category: c.category || 'Custom'
             }));
         } else if (result.data.startTime !== undefined) {
              // Handle single clip
-            clipsToAdd = [result.data as Clip];
+             const c = result.data;
+             clipsToAdd = [{
+               ...c,
+               startTime: typeof c.startTime === 'number' && Number.isFinite(c.startTime) ? c.startTime : 0,
+               endTime: typeof c.endTime === 'number' && Number.isFinite(c.endTime) ? c.endTime : 0
+             } as Clip];
         }
 
         if (clipsToAdd.length > 0) {
@@ -270,6 +277,10 @@ const App: React.FC = () => {
          if (!clip.category) clip.category = "Other";
          if (clip.viralityScore === undefined || clip.viralityScore === null) clip.viralityScore = 5;
 
+         // Sanitize timestamps
+         if (typeof clip.startTime !== 'number' || !Number.isFinite(clip.startTime)) clip.startTime = 0;
+         if (typeof clip.endTime !== 'number' || !Number.isFinite(clip.endTime)) clip.endTime = 0;
+
          // Safety check for empty or 0-duration clips
          if (clip.endTime === 0 || clip.endTime <= clip.startTime) {
              if (clip.startTime === 0 && clip.endTime === 0) {
@@ -329,6 +340,10 @@ const App: React.FC = () => {
     // Safety check for timestamps
     let start = clip.startTime;
     let end = clip.endTime;
+
+    // Strict validation
+    if (!Number.isFinite(start) || start < 0) start = 0;
+    if (!Number.isFinite(end)) end = 0;
     
     // If end is 0 or less than start, force a reasonable duration
     if (end <= start) end = start + 10; 
@@ -341,7 +356,11 @@ const App: React.FC = () => {
     if (reel.length === 0 || !videoRef.current) return;
     setPlayerMode('REEL');
     setReelCurrentIndex(0);
-    videoRef.current.currentTime = reel[0].startTime;
+    
+    let start = reel[0].startTime;
+    if (!Number.isFinite(start) || start < 0) start = 0;
+    
+    videoRef.current.currentTime = start;
     videoRef.current.play();
     setVirtualEdit(null);
   };
@@ -354,14 +373,22 @@ const App: React.FC = () => {
     if (playerMode === 'REEL' && reel.length > 0) {
       const currentClip = reel[reelCurrentIndex];
       // Safety: Use clip end time, or start + 5s if invalid
-      const endTime = currentClip.endTime > currentClip.startTime ? currentClip.endTime : currentClip.startTime + 5;
+      let start = currentClip.startTime;
+      let end = currentClip.endTime;
+      if (!Number.isFinite(start)) start = 0;
+      if (!Number.isFinite(end)) end = 0;
       
-      if (currentTime >= endTime) {
+      const safeEndTime = end > start ? end : start + 5;
+      
+      if (currentTime >= safeEndTime) {
         const nextIndex = reelCurrentIndex + 1;
         if (nextIndex < reel.length) {
            triggerTransition();
            setReelCurrentIndex(nextIndex);
-           videoRef.current.currentTime = reel[nextIndex].startTime;
+           let nextStart = reel[nextIndex].startTime;
+           if (!Number.isFinite(nextStart) || nextStart < 0) nextStart = 0;
+           
+           videoRef.current.currentTime = nextStart;
            videoRef.current.play();
         } else {
            videoRef.current.pause();
@@ -375,9 +402,14 @@ const App: React.FC = () => {
     if (playerMode === 'SINGLE' && activeClipId && analysisData) {
       const currentClip = analysisData.clips.find(c => c.id === activeClipId);
       if (currentClip) {
-         const endTime = currentClip.endTime > currentClip.startTime ? currentClip.endTime : currentClip.startTime + 10;
-         if (currentTime >= endTime) {
-            videoRef.current.currentTime = currentClip.startTime;
+         let start = currentClip.startTime;
+         let end = currentClip.endTime;
+         if (!Number.isFinite(start)) start = 0;
+         if (!Number.isFinite(end)) end = 0;
+
+         const safeEndTime = end > start ? end : start + 10;
+         if (currentTime >= safeEndTime) {
+            videoRef.current.currentTime = start;
             videoRef.current.play();
          }
       }
@@ -394,12 +426,14 @@ const App: React.FC = () => {
         // If not in valid segment, find the NEXT valid segment start
         const nextSegment = virtualEdit.keepSegments.find(seg => seg.start > currentTime);
         if (nextSegment) {
-          videoRef.current.currentTime = nextSegment.start;
+          const safeNextStart = Number.isFinite(nextSegment.start) ? nextSegment.start : currentTime;
+          videoRef.current.currentTime = safeNextStart;
         } else {
           // No more segments, stop
           if (currentTime < videoRef.current.duration - 0.5) { // Prevent infinite loop at very end
              videoRef.current.pause();
-             videoRef.current.currentTime = videoRef.current.duration;
+             const dur = videoRef.current.duration;
+             videoRef.current.currentTime = Number.isFinite(dur) ? dur : 0;
           }
         }
       }
@@ -435,35 +469,38 @@ const App: React.FC = () => {
     workerVideo.style.display = 'none';
     workerVideo.crossOrigin = 'anonymous';
     workerVideo.src = videoUrl || '';
-    // IMPORTANT: Must be false to allow audio track to be captured
-    workerVideo.muted = false; 
+    workerVideo.muted = false; // Must be false to capture audio
     
     document.body.appendChild(workerVideo);
     
-    // Create canvas
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
     if (!ctx) {
-        document.body.removeChild(workerVideo);
+        if (document.body.contains(workerVideo)) document.body.removeChild(workerVideo);
         return;
     }
 
-    await new Promise(r => workerVideo.onloadedmetadata = r);
+    // Wait for metadata to load so we have dimensions
+    await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject("Video metadata load timeout"), 5000);
+        workerVideo.onloadedmetadata = () => { clearTimeout(t); resolve(); };
+        workerVideo.onerror = () => { clearTimeout(t); reject("Video load error"); };
+    }).catch(e => {
+        console.error(e);
+        if (document.body.contains(workerVideo)) document.body.removeChild(workerVideo);
+        return; 
+    });
+
     canvas.width = workerVideo.videoWidth;
     canvas.height = workerVideo.videoHeight;
 
-    // Capture stream from canvas
     const stream = canvas.captureStream(30); 
-    
-    // Audio Context Setup
     const audioCtx = new AudioContext();
     const source = audioCtx.createMediaElementSource(workerVideo);
     const dest = audioCtx.createMediaStreamDestination();
-    
     source.connect(dest);
     
-    // If the video has audio tracks, add them to the stream
     if (dest.stream.getAudioTracks().length > 0) {
         stream.addTrack(dest.stream.getAudioTracks()[0]);
     } else {
@@ -486,15 +523,19 @@ const App: React.FC = () => {
         cancelAnimationFrame(animationFrameId);
         audioCtx.close();
         
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        if (chunks.length > 0) {
+            const blob = new Blob(chunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } else {
+            console.error("Export failed: No data recorded");
+        }
         
         // Clean up worker video
         if (document.body.contains(workerVideo)) {
@@ -510,30 +551,50 @@ const App: React.FC = () => {
       try {
         for (const clip of clipsToProcess) {
           // Safety fallback for bad timestamps
-          const start = clip.startTime;
-          const end = clip.endTime > start ? clip.endTime : start + 5;
+          let start = clip.startTime;
+          let end = clip.endTime;
+          
+          if (!Number.isFinite(start) || start < 0) start = 0;
+          if (!Number.isFinite(end)) end = 0;
+          if (end <= start) end = start + 5;
 
           workerVideo.currentTime = start;
+          
+          // Robust Seek Wait
           await new Promise<void>(r => { 
-             const fn = () => { workerVideo.removeEventListener('seeked', fn); r(); }; 
+             const timeout = setTimeout(() => {
+                 console.warn(`Seek timeout for clip ${clip.id}, attempting to play anyway.`);
+                 r();
+             }, 2000); // 2s timeout for seek
+             
+             const fn = () => { 
+                 clearTimeout(timeout);
+                 workerVideo.removeEventListener('seeked', fn); 
+                 r(); 
+             }; 
              workerVideo.addEventListener('seeked', fn); 
           });
           
           await workerVideo.play();
           
+          // Robust Play Loop
           await new Promise<void>(r => {
             const check = () => {
-              if (workerVideo.currentTime >= end) { workerVideo.pause(); r(); }
-              else requestAnimationFrame(check);
+              // Stop condition: Reached end, paused (error/stall), or ended
+              if (workerVideo.currentTime >= end || workerVideo.paused || workerVideo.ended) { 
+                  workerVideo.pause(); 
+                  r(); 
+              } else { 
+                  requestAnimationFrame(check);
+              }
             };
             check();
           });
         }
         mediaRecorder.stop();
       } catch (e) {
-        console.error(e);
+        console.error("Export process error:", e);
         mediaRecorder.stop();
-        // Clean up on error too
         if (document.body.contains(workerVideo)) {
             document.body.removeChild(workerVideo);
         }
