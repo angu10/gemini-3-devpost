@@ -190,30 +190,38 @@ const App: React.FC = () => {
 
       // EXECUTE INTENT
       if (result.intent === 'REEL_ADD' && result.data) {
-        // Handle both single clip and multi-clip additions
-        let clipsToAdd: Clip[] = [];
         
-        if (result.data.clips && Array.isArray(result.data.clips) && result.data.clips.length > 0) {
+        let clipsToAdd: Clip[] = [];
+
+        // Check for "ALL" intent
+        if (result.data.all) {
+            clipsToAdd = analysisData?.clips || [];
+        } else if (result.data.clips && Array.isArray(result.data.clips) && result.data.clips.length > 0) {
+            // Handle explicit clip list
             clipsToAdd = result.data.clips.map((c: any) => ({
                 ...c,
                 id: c.id || `gen-${Date.now()}-${Math.random()}`,
                 category: c.category || 'Custom'
             }));
         } else if (result.data.startTime !== undefined) {
+             // Handle single clip
             clipsToAdd = [result.data as Clip];
         }
 
         if (clipsToAdd.length > 0) {
             setReel(prev => [...prev, ...clipsToAdd]);
             
-            setAnalysisData(prev => {
-               const currentClips = prev?.clips || [];
-               const newUniqueClips = clipsToAdd.filter(
-                   nc => !currentClips.some(oc => oc.id === nc.id || (Math.abs(oc.startTime - nc.startTime) < 0.5 && Math.abs(oc.endTime - nc.endTime) < 0.5))
-               );
-               if (newUniqueClips.length === 0) return prev;
-               return { overallSummary: prev?.overallSummary || '', clips: [...newUniqueClips, ...currentClips] };
-            });
+            // Only update analysis data if we generated *new* clips, not if we just moved existing ones
+            if (!result.data.all) {
+                setAnalysisData(prev => {
+                   const currentClips = prev?.clips || [];
+                   const newUniqueClips = clipsToAdd.filter(
+                       nc => !currentClips.some(oc => oc.id === nc.id || (Math.abs(oc.startTime - nc.startTime) < 0.5 && Math.abs(oc.endTime - nc.endTime) < 0.5))
+                   );
+                   if (newUniqueClips.length === 0) return prev;
+                   return { overallSummary: prev?.overallSummary || '', clips: [...newUniqueClips, ...currentClips] };
+                });
+            }
 
             playClip(clipsToAdd[0]);
         }
@@ -243,6 +251,55 @@ const App: React.FC = () => {
         });
       } else if (result.intent === 'SEARCH' && result.data) {
          const clip = result.data as Clip;
+         
+         if (clip.startTime === -1) {
+            // AI signaled that it found the topic but couldn't timestamp it
+            setChatHistory(prev => [...prev, {
+              id: `warn-${Date.now()}`,
+              role: 'assistant',
+              content: "I found the topic you mentioned, but I couldn't identify the exact timestamp in the video file.",
+              timestamp: Date.now()
+            }]);
+            return;
+         }
+
+         // Ensure clip has necessary fields if freshly generated
+         if (!clip.id) clip.id = `search-${Date.now()}`;
+         if (!clip.title) clip.title = "Found Clip";
+         if (!clip.tags) clip.tags = ["Search Result"];
+         if (!clip.category) clip.category = "Other";
+         if (clip.viralityScore === undefined || clip.viralityScore === null) clip.viralityScore = 5;
+
+         // Safety check for empty or 0-duration clips
+         if (clip.endTime === 0 || clip.endTime <= clip.startTime) {
+             if (clip.startTime === 0 && clip.endTime === 0) {
+                // If it's literally 0-0, it's likely a hallucination or failure to find.
+                // We'll trust it if description is detailed, but update end time to 10s to ensure it's playable.
+                clip.endTime = 10;
+             }
+         }
+
+         // Add to analysisData so it appears in the drawer and loop playback works
+         setAnalysisData(prev => {
+             // If this clip ID already exists, don't duplicate
+             if (prev?.clips.some(c => c.id === clip.id)) return prev;
+             
+             // Check for duplicate timestamps (approximate)
+             const isDuplicateTime = prev?.clips.some(c => 
+                 Math.abs(c.startTime - clip.startTime) < 1.0 && 
+                 Math.abs(c.endTime - clip.endTime) < 1.0
+             );
+             
+             if (isDuplicateTime) {
+                 return prev;
+             }
+
+             return { 
+                 overallSummary: prev?.overallSummary || 'Search Results', 
+                 clips: [clip, ...(prev?.clips || [])] 
+             };
+         });
+
          playClip(clip);
       }
 
@@ -268,7 +325,15 @@ const App: React.FC = () => {
     if (!videoRef.current) return;
     setPlayerMode('SINGLE');
     setActiveClipId(clip.id);
-    videoRef.current.currentTime = clip.startTime;
+    
+    // Safety check for timestamps
+    let start = clip.startTime;
+    let end = clip.endTime;
+    
+    // If end is 0 or less than start, force a reasonable duration
+    if (end <= start) end = start + 10; 
+    
+    videoRef.current.currentTime = start;
     videoRef.current.play();
   };
 
@@ -288,7 +353,10 @@ const App: React.FC = () => {
     // 1. REEL MODE
     if (playerMode === 'REEL' && reel.length > 0) {
       const currentClip = reel[reelCurrentIndex];
-      if (currentTime >= currentClip.endTime) {
+      // Safety: Use clip end time, or start + 5s if invalid
+      const endTime = currentClip.endTime > currentClip.startTime ? currentClip.endTime : currentClip.startTime + 5;
+      
+      if (currentTime >= endTime) {
         const nextIndex = reelCurrentIndex + 1;
         if (nextIndex < reel.length) {
            triggerTransition();
@@ -306,9 +374,12 @@ const App: React.FC = () => {
     // 2. SINGLE CLIP LOOP MODE
     if (playerMode === 'SINGLE' && activeClipId && analysisData) {
       const currentClip = analysisData.clips.find(c => c.id === activeClipId);
-      if (currentClip && currentTime >= currentClip.endTime) {
-        videoRef.current.currentTime = currentClip.startTime;
-        videoRef.current.play();
+      if (currentClip) {
+         const endTime = currentClip.endTime > currentClip.startTime ? currentClip.endTime : currentClip.startTime + 10;
+         if (currentTime >= endTime) {
+            videoRef.current.currentTime = currentClip.startTime;
+            videoRef.current.play();
+         }
       }
     }
 
@@ -359,22 +430,45 @@ const App: React.FC = () => {
   };
 
   const processAndDownload = async (clipsToProcess: Clip[], filename: string) => {
-    const workerVideo = processingVideoRef.current;
+    // Create a totally new video element to avoid AudioContext already-connected errors.
+    const workerVideo = document.createElement('video');
+    workerVideo.style.display = 'none';
+    workerVideo.crossOrigin = 'anonymous';
+    workerVideo.src = videoUrl || '';
+    // IMPORTANT: Must be false to allow audio track to be captured
+    workerVideo.muted = false; 
+    
+    document.body.appendChild(workerVideo);
+    
+    // Create canvas
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    if (!workerVideo || !ctx) return;
+    if (!ctx) {
+        document.body.removeChild(workerVideo);
+        return;
+    }
 
-    workerVideo.src = videoUrl || '';
     await new Promise(r => workerVideo.onloadedmetadata = r);
     canvas.width = workerVideo.videoWidth;
     canvas.height = workerVideo.videoHeight;
+
+    // Capture stream from canvas
     const stream = canvas.captureStream(30); 
+    
+    // Audio Context Setup
     const audioCtx = new AudioContext();
     const source = audioCtx.createMediaElementSource(workerVideo);
     const dest = audioCtx.createMediaStreamDestination();
+    
     source.connect(dest);
-    stream.addTrack(dest.stream.getAudioTracks()[0]);
+    
+    // If the video has audio tracks, add them to the stream
+    if (dest.stream.getAudioTracks().length > 0) {
+        stream.addTrack(dest.stream.getAudioTracks()[0]);
+    } else {
+        console.warn("No audio track detected in source video.");
+    }
 
     const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
     const chunks: BlobPart[] = [];
@@ -391,6 +485,7 @@ const App: React.FC = () => {
       mediaRecorder.onstop = () => {
         cancelAnimationFrame(animationFrameId);
         audioCtx.close();
+        
         const blob = new Blob(chunks, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -400,8 +495,12 @@ const App: React.FC = () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        workerVideo.pause();
-        workerVideo.src = "";
+        
+        // Clean up worker video
+        if (document.body.contains(workerVideo)) {
+            document.body.removeChild(workerVideo);
+        }
+        
         resolve();
       };
 
@@ -410,7 +509,11 @@ const App: React.FC = () => {
 
       try {
         for (const clip of clipsToProcess) {
-          workerVideo.currentTime = clip.startTime;
+          // Safety fallback for bad timestamps
+          const start = clip.startTime;
+          const end = clip.endTime > start ? clip.endTime : start + 5;
+
+          workerVideo.currentTime = start;
           await new Promise<void>(r => { 
              const fn = () => { workerVideo.removeEventListener('seeked', fn); r(); }; 
              workerVideo.addEventListener('seeked', fn); 
@@ -420,7 +523,7 @@ const App: React.FC = () => {
           
           await new Promise<void>(r => {
             const check = () => {
-              if (workerVideo.currentTime >= clip.endTime) { workerVideo.pause(); r(); }
+              if (workerVideo.currentTime >= end) { workerVideo.pause(); r(); }
               else requestAnimationFrame(check);
             };
             check();
@@ -430,6 +533,10 @@ const App: React.FC = () => {
       } catch (e) {
         console.error(e);
         mediaRecorder.stop();
+        // Clean up on error too
+        if (document.body.contains(workerVideo)) {
+            document.body.removeChild(workerVideo);
+        }
         resolve();
       }
     });

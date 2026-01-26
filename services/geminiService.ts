@@ -111,16 +111,25 @@ export const processUserCommand = async (
   You are a video editing assistant (Highlight Reel Copilot). 
   Your goal is to interpret the user's request and map it to an action (intent).
   
-  AVAILABLE CLIPS CONTEXT:
+  AVAILABLE CLIPS CONTEXT (Already found):
   ${JSON.stringify(existingClips.map(c => ({ id: c.id, title: c.title, start: c.startTime, end: c.endTime, viralityScore: c.viralityScore, category: c.category })))}
 
   INTENTS:
-  - SEARCH: User wants to find a specific moment. Data: The Clip object found.
+  - SEARCH: User wants to find a specific moment or topic (e.g. "Find the part about privacy").
+    - FIRST: Check 'AVAILABLE CLIPS CONTEXT'. If a match is found, return that existing clip object.
+    - SECOND: If NOT found in context, YOU MUST ANALYZE THE VIDEO FILE to find the specific segment.
+      - Create a NEW Clip object in the 'data' field.
+      - **CRITICAL**: You MUST provide accurate 'startTime' and 'endTime' (in seconds) based on the video content. 
+      - **TIMESTAMPS**: If you find the topic but cannot determine the exact start time, return 'startTime': -1. DO NOT GUESS 0.
+      - Generate a 'title', 'description', 'viralityScore' (1-10), 'tags' and 'category'.
+  
   - REEL_ADD: User wants to create a sequence or add clips to the reel. 
-    - Data: { clips: [Array of Clip objects] }. 
-    - IMPORTANT: If the user asks to "make a reel of funny clips" or "create a summary", SELECT multiple matching items from the AVAILABLE CLIPS CONTEXT and return them in the 'clips' array.
+    - **ADD ALL**: If the user wants to add ALL clips (e.g. "Add all clips", "Create a reel with these"), return data: { all: true }. DO NOT list the clips manually.
+    - **ADD SPECIFIC**: If specific clips, return data: { clips: [ ... ] }.
+  
   - REEL_REMOVE: Remove clip.
   - REEL_CLEAR: Clear reel.
+  
   - EDIT: Visual effect OR remove audio fillers.
     - If "remove ums/fillers": 
       1. Analyze the audio transcript.
@@ -143,6 +152,7 @@ export const processUserCommand = async (
         type: Type.OBJECT,
         nullable: true,
         properties: {
+            all: { type: Type.BOOLEAN, nullable: true },
             id: { type: Type.STRING, nullable: true },
             title: { type: Type.STRING, nullable: true },
             startTime: { type: Type.NUMBER, nullable: true },
@@ -200,8 +210,6 @@ export const processUserCommand = async (
     config: {
       responseMimeType: 'application/json',
       responseSchema: responseSchema,
-      // We set a moderate thinking budget. 0 disables it, which breaks complex tasks like "remove ums"
-      // because the model needs reasoning to segment audio. 2048 is a good balance for speed vs capability.
       thinkingConfig: { thinkingBudget: 2048 } 
     },
   });
@@ -209,11 +217,15 @@ export const processUserCommand = async (
   const text = response.text;
   if (!text) throw new Error("No response from Gemini");
 
-  // Robust cleaning for potential markdown code blocks
+  // Robust cleaning: Extract JSON object if wrapped in markdown or chat text
   let cleanedText = text.trim();
-  // Remove markdown wrapping if present
-  if (cleanedText.startsWith('```')) {
-    cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
+  const firstOpen = text.indexOf('{');
+  const lastClose = text.lastIndexOf('}');
+  
+  if (firstOpen !== -1 && lastClose !== -1) {
+    cleanedText = text.substring(firstOpen, lastClose + 1);
+  } else if (cleanedText.startsWith('```')) {
+     cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
   }
   
   try {
