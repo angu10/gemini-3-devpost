@@ -28,11 +28,14 @@ SCORING (1-10):
 - 1-4: Average - Informative but dry.
 
 REQUIREMENTS:
-- Each clip must be 15-60 seconds in duration
-- Clips must NOT overlap in timestamps
-- Titles should be engaging but ACCURATE
-- Include an overall 1-2 sentence video summary
-- GENERATE 3-5 HASHTAGS (tags) for each clip
+- **timestamps**: Must be in SECONDS (number). Example: 15.5.
+- **startTime** and **endTime**: Must be POSITIVE numbers greater than 0.
+- **viralityScore**: Must be an INTEGER between 1 and 10.
+- Each clip must be 15-60 seconds in duration.
+- Clips must NOT overlap in timestamps.
+- Titles should be engaging but ACCURATE.
+- Include an overall 1-2 sentence video summary.
+- GENERATE 3-5 HASHTAGS (tags) for each clip.
 
 CATEGORIES:
 - Funny: Humor, jokes, comedic moments

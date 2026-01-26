@@ -6,6 +6,53 @@ import { AnalysisResponse, Clip, CopilotResponse } from '../types';
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// --- Helper: Sanitize Clip Data ---
+const sanitizeClip = (clip: any): Clip => {
+    let start = Number(clip.startTime);
+    let end = Number(clip.endTime);
+    let score = Number(clip.viralityScore);
+
+    // Fix Timestamps
+    if (!Number.isFinite(start) || start < 0) start = 0;
+    
+    // If end is missing, invalid, or less than start, give it a default duration (15s)
+    if (!Number.isFinite(end) || end <= start) {
+        end = start + 15;
+    }
+
+    // Fix Score: Handle weird hallucinations like 0.00008 or >10
+    if (!Number.isFinite(score)) {
+        score = 5;
+    } else {
+        // If score is normalized (0.0 to 1.0), scale it up. 
+        // If it's micro-garbage (0.00008), it usually means 0 relevance, but we'll default to 5 to show it.
+        if (score > 0 && score <= 1) {
+            score = Math.round(score * 10);
+        }
+        // Clamp 1-10
+        if (score < 1) score = 1;
+        if (score > 10) score = 10;
+        score = Math.round(score);
+    }
+
+    // Ensure strings
+    const title = clip.title ? String(clip.title) : "Untitled Clip";
+    const description = clip.description ? String(clip.description) : "No description provided.";
+    const category = clip.category || 'Other';
+    const tags = Array.isArray(clip.tags) ? clip.tags.map(String) : [];
+
+    return {
+        id: clip.id || `gen-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        title,
+        description,
+        startTime: start,
+        endTime: end,
+        viralityScore: score,
+        category,
+        tags
+    };
+};
+
 /**
  * Uploads a file to the Gemini File API and waits for it to be processed.
  */
@@ -96,7 +143,21 @@ export const analyzeVideo = async (
   const text = response.text;
   if (!text) throw new Error("No response from Gemini");
   
-  return JSON.parse(text) as AnalysisResponse;
+  let result: AnalysisResponse;
+  try {
+     result = JSON.parse(text) as AnalysisResponse;
+  } catch (e) {
+     throw new Error("Failed to parse analysis results.");
+  }
+
+  // Sanitize the output
+  if (result.clips && Array.isArray(result.clips)) {
+      result.clips = result.clips.map(sanitizeClip);
+  } else {
+      result.clips = [];
+  }
+
+  return result;
 };
 
 /**
@@ -122,9 +183,9 @@ export const processUserCommand = async (
     - FIRST: Check 'AVAILABLE CLIPS CONTEXT'. If a match is found, return that existing clip object.
     - SECOND: If NOT found in context, YOU MUST ANALYZE THE VIDEO FILE to find the specific segment.
       - Create a NEW Clip object in the 'data' field.
-      - **CRITICAL**: You MUST provide accurate 'startTime' and 'endTime' (in seconds) based on the video content. 
-      - **TIMESTAMPS**: If you find the topic but cannot determine the exact start time, return 'startTime': -1. DO NOT GUESS 0.
-      - Generate a 'title', 'description', 'viralityScore' (1-10), 'tags' and 'category'.
+      - **CRITICAL**: You MUST provide accurate 'startTime' and 'endTime' (in POSITIVE SECONDS) based on the video content. 
+      - **TIMESTAMPS**: If you find the topic but cannot determine the exact start time, return 'startTime': -1. DO NOT GUESS 0 or negative numbers.
+      - Generate a 'title', 'description', 'viralityScore' (INTEGER 1-10), 'tags' and 'category'.
   
   - REEL_ADD: User wants to create a sequence or add clips to the reel. 
     - **CASE 1: CONTEXT EXISTS**: If 'AVAILABLE CLIPS CONTEXT' is NOT empty and user wants to add them (e.g., "Add all", "Make a reel"), return data: { all: true }.
@@ -240,10 +301,26 @@ export const processUserCommand = async (
      cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
   }
   
+  let copilotResponse: CopilotResponse;
+  
   try {
-    return JSON.parse(cleanedText) as CopilotResponse;
+    copilotResponse = JSON.parse(cleanedText) as CopilotResponse;
   } catch (e) {
     console.error("JSON Parse Error on Gemini Response:", text);
     throw new Error("Failed to process AI response");
   }
+
+  // --- Sanitize Copilot Data ---
+  if (copilotResponse.data) {
+      if (Array.isArray(copilotResponse.data.clips)) {
+          copilotResponse.data.clips = copilotResponse.data.clips.map(sanitizeClip);
+      }
+      // If it returned a single clip structure in the root of data (for SEARCH intent)
+      if (copilotResponse.intent === 'SEARCH' && copilotResponse.data.startTime !== undefined) {
+          const sanitized = sanitizeClip(copilotResponse.data);
+          copilotResponse.data = { ...copilotResponse.data, ...sanitized };
+      }
+  }
+
+  return copilotResponse;
 };
