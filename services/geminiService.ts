@@ -25,7 +25,6 @@ const sanitizeClip = (clip: any): Clip => {
         score = 5;
     } else {
         // If score is normalized (0.0 to 1.0), scale it up. 
-        // If it's micro-garbage (0.00008), it usually means 0 relevance, but we'll default to 5 to show it.
         if (score > 0 && score <= 1) {
             score = Math.round(score * 10);
         }
@@ -112,7 +111,7 @@ export const analyzeVideo = async (
             description: { type: Type.STRING },
             startTime: { type: Type.NUMBER },
             endTime: { type: Type.NUMBER },
-            viralityScore: { type: Type.NUMBER },
+            viralityScore: { type: Type.INTEGER }, // Changed from NUMBER to INTEGER
             category: { type: Type.STRING, enum: ['Funny', 'Insightful', 'Action', 'Emotional', 'Summary', 'Other', 'Custom'] },
             tags: { type: Type.ARRAY, items: { type: Type.STRING } },
           },
@@ -143,10 +142,23 @@ export const analyzeVideo = async (
   const text = response.text;
   if (!text) throw new Error("No response from Gemini");
   
+  // Clean JSON before parsing
+  let fixedText = text.trim();
+  // Strip markdown code blocks
+  if (fixedText.startsWith('```')) {
+     fixedText = fixedText.replace(/^```(json)?|```$/g, '');
+  }
+  
+  // Truncate long floats for timestamps (e.g. 123.456789 -> 123.456)
+  // We no longer strictly regex replace viralityScore here because Type.INTEGER handles it,
+  // but we keep the timestamp cleaner for safety.
+  fixedText = fixedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
+
   let result: AnalysisResponse;
   try {
-     result = JSON.parse(text) as AnalysisResponse;
+     result = JSON.parse(fixedText) as AnalysisResponse;
   } catch (e) {
+     console.error("JSON Parse Error (Analysis):", fixedText.substring(0, 500));
      throw new Error("Failed to parse analysis results.");
   }
 
@@ -184,39 +196,33 @@ export const processUserCommand = async (
   - Only deep-analyze video if no context match.
 
   INTENTS:
-  - SEARCH: User wants to find a specific moment or topic (e.g. "Find the part about privacy").
-    - FIRST: Check 'AVAILABLE CLIPS' titles. If a match is found, return that existing clip object.
-    - SECOND: If NOT found in context, YOU MUST ANALYZE THE VIDEO FILE to find the specific segment.
-      - Create a NEW Clip object in the 'data' field.
-      - **CRITICAL**: You MUST provide accurate 'startTime' and 'endTime' (in POSITIVE SECONDS) based on the video content. 
-      - **TIMESTAMPS**: If you find the topic but cannot determine the exact start time, return 'startTime': -1. DO NOT GUESS 0 or negative numbers.
-      - Generate a 'title', 'description', 'viralityScore' (INTEGER 1-10), 'tags' and 'category'.
+  - SEARCH: User wants to find a specific moment or topic.
+    - FIRST: Check 'AVAILABLE CLIPS' titles. If match, return that existing clip.
+    - SECOND: If NOT found, ANALYZE VIDEO FILE.
+      - Create NEW Clip in 'data'.
+      - **CRITICAL**: Accurate 'startTime' and 'endTime' (POSITIVE SECONDS).
+      - 'viralityScore' must be INTEGER (1-10).
   
-  - REEL_ADD: User wants to create a sequence or add clips to the reel.
+  - REEL_ADD: User wants to create sequence/add clips.
     - If existingClips.length > 0 and user wants "all": return data: { all: true }.
-    - Otherwise: Analyze video to find suitable clips and return data: { clips: [ ...new clips... ] }.
+    - Otherwise: Analyze video, return data: { clips: [ ...new... ] }.
   
   - REEL_REMOVE: Remove clip.
   - REEL_CLEAR: Clear reel.
   
   - EDIT: Visual effect OR remove audio fillers.
-    - If "remove ums/fillers": 
-      1. Analyze the audio transcript.
-      2. Set 'intent' to 'EDIT'.
-      3. Return 'keepSegments' (array of {start, end}). 
-      4. STRATEGY: Return segments that CONTAIN SPEECH, effectively skipping silences and filler words (um, uh).
-      5. Set filterStyle to null.
-    - If visual filter requested: Set filterStyle CSS string.
+    - "remove ums": Analyze audio, return 'keepSegments' (parts WITH speech).
+    - Visual filter: Set filterStyle.
   
   OUTPUT format MUST be JSON matching the schema.
   `;
 
-  // Define data schema to be flexible but structured enough for Type.OBJECT validation
+  // Define data schema
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
       intent: { type: Type.STRING, enum: ['SEARCH', 'EDIT', 'REEL_ADD', 'REEL_REMOVE', 'REEL_CLEAR', 'UNKNOWN'] },
-      message: { type: Type.STRING, description: "Conversational response to the user" },
+      message: { type: Type.STRING },
       data: { 
         type: Type.OBJECT,
         nullable: true,
@@ -226,7 +232,7 @@ export const processUserCommand = async (
             title: { type: Type.STRING, nullable: true },
             startTime: { type: Type.NUMBER, nullable: true },
             endTime: { type: Type.NUMBER, nullable: true },
-            viralityScore: { type: Type.NUMBER, nullable: true },
+            viralityScore: { type: Type.INTEGER, nullable: true }, // Changed from NUMBER to INTEGER
             description: { type: Type.STRING, nullable: true },
             filterStyle: { type: Type.STRING, nullable: true },
             index: { type: Type.NUMBER, nullable: true },
@@ -252,7 +258,7 @@ export const processUserCommand = async (
                         title: { type: Type.STRING },
                         startTime: { type: Type.NUMBER },
                         endTime: { type: Type.NUMBER },
-                        viralityScore: { type: Type.NUMBER },
+                        viralityScore: { type: Type.INTEGER }, // Changed from NUMBER to INTEGER
                         description: { type: Type.STRING },
                         tags: { type: Type.ARRAY, items: { type: Type.STRING } },
                         category: { type: Type.STRING, nullable: true }
@@ -270,7 +276,7 @@ export const processUserCommand = async (
     responseSchema: responseSchema,
   };
 
-  // Only use thinking budget for Pro models to avoid issues with Flash
+  // Only use thinking budget for Pro models
   if (modelName.toLowerCase().includes('pro')) {
      config.thinkingConfig = { thinkingBudget: 2048 };
   }
@@ -292,7 +298,6 @@ export const processUserCommand = async (
   const text = response.text;
   if (!text) throw new Error("No response from Gemini");
 
-  // Robust cleaning: Extract JSON object if wrapped in markdown or chat text
   let cleanedText = text.trim();
   const firstOpen = text.indexOf('{');
   const lastClose = text.lastIndexOf('}');
@@ -303,15 +308,13 @@ export const processUserCommand = async (
      cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
   }
   
+  // Clean potentially extremely long floats from timestamps
+  cleanedText = cleanedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
+
   let copilotResponse: CopilotResponse;
   
   try {
-    // Fix extreme precision floating point numbers from Gemini which cause JSON.parse to hang or fail
-    const fixedJson = cleanedText.replace(/:\s*(\d+\.\d{10,})/g, (match, num) => {
-        return `: ${parseFloat(num).toFixed(2)}`;
-    });
-
-    copilotResponse = JSON.parse(fixedJson) as CopilotResponse;
+    copilotResponse = JSON.parse(cleanedText) as CopilotResponse;
   } catch (e) {
     console.error("JSON Parse Error on Gemini Response:", text.substring(0, 500));
     throw new Error("Failed to process AI response");
@@ -322,7 +325,6 @@ export const processUserCommand = async (
       if (Array.isArray(copilotResponse.data.clips)) {
           copilotResponse.data.clips = copilotResponse.data.clips.map(sanitizeClip);
       }
-      // If it returned a single clip structure in the root of data (for SEARCH intent)
       if (copilotResponse.intent === 'SEARCH' && copilotResponse.data.startTime !== undefined) {
           const sanitized = sanitizeClip(copilotResponse.data);
           copilotResponse.data = { ...copilotResponse.data, ...sanitized };
