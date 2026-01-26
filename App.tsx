@@ -467,8 +467,14 @@ const App: React.FC = () => {
     if (!videoUrl || isExportingSmart || downloadingClipId) return;
     
     setDownloadingClipId(clip.id);
-    await processAndDownload([clip], `clip_${clip.title.replace(/\s+/g, '_')}.webm`);
-    setDownloadingClipId(null);
+    try {
+      await processAndDownload([clip], `clip_${clip.title.replace(/\s+/g, '_')}.webm`);
+    } catch (error) {
+      console.error("Download failed:", error);
+      alert("Download failed. Please try again.");
+    } finally {
+      setDownloadingClipId(null);
+    }
   };
 
   const handleExportReel = async () => {
