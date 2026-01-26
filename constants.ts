@@ -7,7 +7,7 @@ export const MODELS = {
 
 export const DEFAULT_MODEL = MODELS.FLASH;
 
-export const MAX_FILE_SIZE_MB = 200; // Increased to 2GB for File API support
+export const MAX_FILE_SIZE_MB = 200; // Limit to 200MB
 
 export const SAMPLE_PROMPT = `
 You are an expert video content analyzer specializing in identifying the best, most engaging, or valuable moments from long-form videos.
@@ -26,6 +26,9 @@ SCORING (1-10):
 - 8-10: Excellent - Must watch (Funny, profound, or very exciting).
 - 5-7: Good - Useful or entertaining.
 - 1-4: Average - Informative but dry.
+- Prioritize clips with viralityScore >= 7.
+- Return 5-10 clips if most segments are average (score < 6).
+- Return 10-15 clips if video has many excellent moments (score >= 8).
 
 REQUIREMENTS:
 - **timestamps**: Must be in SECONDS (number). Example: 15.5.
@@ -42,6 +45,6 @@ CATEGORIES:
 - Insightful: Key lessons, explanations, valuable information
 - Action: Exciting visuals, demonstrations
 - Emotional: Inspiring, touching, dramatic
-- Summary: A succinct overview of the main topic
+- Summary: Comprehensive overview segment explaining the main topic (60s max)
 - Other: Unique moments
 `;

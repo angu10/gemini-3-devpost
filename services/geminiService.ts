@@ -175,24 +175,26 @@ export const processUserCommand = async (
   You are a video editing assistant (Highlight Reel Copilot). 
   Your goal is to interpret the user's request and map it to an action (intent).
   
-  AVAILABLE CLIPS CONTEXT (Already found):
-  ${JSON.stringify(existingClips.map(c => ({ id: c.id, title: c.title, start: c.startTime, end: c.endTime, viralityScore: c.viralityScore, category: c.category })))}
+  AVAILABLE CLIPS: ${existingClips.length} clips found.
+  Top clips: ${existingClips.slice(0, 3).map(c => c.title).join(', ')}
+
+  SPEED PRIORITY:
+  - For SEARCH: Return result in <5 seconds.
+  - If query matches existing clip titles, use context immediately.
+  - Only deep-analyze video if no context match.
 
   INTENTS:
   - SEARCH: User wants to find a specific moment or topic (e.g. "Find the part about privacy").
-    - FIRST: Check 'AVAILABLE CLIPS CONTEXT'. If a match is found, return that existing clip object.
+    - FIRST: Check 'AVAILABLE CLIPS' titles. If a match is found, return that existing clip object.
     - SECOND: If NOT found in context, YOU MUST ANALYZE THE VIDEO FILE to find the specific segment.
       - Create a NEW Clip object in the 'data' field.
       - **CRITICAL**: You MUST provide accurate 'startTime' and 'endTime' (in POSITIVE SECONDS) based on the video content. 
       - **TIMESTAMPS**: If you find the topic but cannot determine the exact start time, return 'startTime': -1. DO NOT GUESS 0 or negative numbers.
       - Generate a 'title', 'description', 'viralityScore' (INTEGER 1-10), 'tags' and 'category'.
   
-  - REEL_ADD: User wants to create a sequence or add clips to the reel. 
-    - **CASE 1: CONTEXT EXISTS**: If 'AVAILABLE CLIPS CONTEXT' is NOT empty and user wants to add them (e.g., "Add all", "Make a reel"), return data: { all: true }.
-    - **CASE 2: NO CONTEXT**: If 'AVAILABLE CLIPS CONTEXT' is EMPTY, you MUST ANALYZE the video file to find suitable clips for the request.
-      - Generate a list of new clips.
-      - Return data: { clips: [ ...new clips... ] }.
-    - **CASE 3: SPECIFIC NEW CLIPS**: If user asks for specific moments not in context, generate them and return data: { clips: [ ... ] }.
+  - REEL_ADD: User wants to create a sequence or add clips to the reel.
+    - If existingClips.length > 0 and user wants "all": return data: { all: true }.
+    - Otherwise: Analyze video to find suitable clips and return data: { clips: [ ...new clips... ] }.
   
   - REEL_REMOVE: Remove clip.
   - REEL_CLEAR: Clear reel.
@@ -304,9 +306,14 @@ export const processUserCommand = async (
   let copilotResponse: CopilotResponse;
   
   try {
-    copilotResponse = JSON.parse(cleanedText) as CopilotResponse;
+    // Fix extreme precision floating point numbers from Gemini which cause JSON.parse to hang or fail
+    const fixedJson = cleanedText.replace(/:\s*(\d+\.\d{10,})/g, (match, num) => {
+        return `: ${parseFloat(num).toFixed(2)}`;
+    });
+
+    copilotResponse = JSON.parse(fixedJson) as CopilotResponse;
   } catch (e) {
-    console.error("JSON Parse Error on Gemini Response:", text);
+    console.error("JSON Parse Error on Gemini Response:", text.substring(0, 500));
     throw new Error("Failed to process AI response");
   }
 
