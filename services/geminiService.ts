@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
-import { GEMINI_MODEL, SAMPLE_PROMPT } from '../constants';
+import { SAMPLE_PROMPT } from '../constants';
 import { AnalysisResponse, Clip, CopilotResponse } from '../types';
 
 // Initialize Gemini Client
@@ -46,6 +47,7 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
 export const analyzeVideo = async (
   fileUri: string, 
   mimeType: string,
+  modelName: string,
   onPartial?: (clips: Clip[]) => void
 ): Promise<AnalysisResponse> => {
   // Schema definition for the analysis response
@@ -75,7 +77,7 @@ export const analyzeVideo = async (
   };
 
   const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
+    model: modelName,
     contents: [
       {
         role: 'user',
@@ -104,7 +106,8 @@ export const processUserCommand = async (
   fileUri: string,
   mimeType: string,
   userMessage: string,
-  existingClips: Clip[]
+  existingClips: Clip[],
+  modelName: string
 ): Promise<CopilotResponse> => {
 
   const systemPrompt = `
@@ -124,8 +127,11 @@ export const processUserCommand = async (
       - Generate a 'title', 'description', 'viralityScore' (1-10), 'tags' and 'category'.
   
   - REEL_ADD: User wants to create a sequence or add clips to the reel. 
-    - **ADD ALL**: If the user wants to add ALL clips (e.g. "Add all clips", "Create a reel with these"), return data: { all: true }. DO NOT list the clips manually.
-    - **ADD SPECIFIC**: If specific clips, return data: { clips: [ ... ] }.
+    - **CASE 1: CONTEXT EXISTS**: If 'AVAILABLE CLIPS CONTEXT' is NOT empty and user wants to add them (e.g., "Add all", "Make a reel"), return data: { all: true }.
+    - **CASE 2: NO CONTEXT**: If 'AVAILABLE CLIPS CONTEXT' is EMPTY, you MUST ANALYZE the video file to find suitable clips for the request.
+      - Generate a list of new clips.
+      - Return data: { clips: [ ...new clips... ] }.
+    - **CASE 3: SPECIFIC NEW CLIPS**: If user asks for specific moments not in context, generate them and return data: { clips: [ ... ] }.
   
   - REEL_REMOVE: Remove clip.
   - REEL_CLEAR: Clear reel.
@@ -196,8 +202,18 @@ export const processUserCommand = async (
     required: ['intent', 'message'],
   };
 
+  const config: any = {
+    responseMimeType: 'application/json',
+    responseSchema: responseSchema,
+  };
+
+  // Only use thinking budget for Pro models to avoid issues with Flash
+  if (modelName.toLowerCase().includes('pro')) {
+     config.thinkingConfig = { thinkingBudget: 2048 };
+  }
+
   const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
+    model: modelName,
     contents: [
       {
         role: 'user',
@@ -207,11 +223,7 @@ export const processUserCommand = async (
         ],
       },
     ],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: responseSchema,
-      thinkingConfig: { thinkingBudget: 2048 } 
-    },
+    config: config,
   });
 
   const text = response.text;

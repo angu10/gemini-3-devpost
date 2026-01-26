@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Clip, AppState, AnalysisResponse, SearchState, VirtualEdit, ChatMessage, PlayerMode } from './types';
-import { MAX_FILE_SIZE_MB } from './constants';
+import { MAX_FILE_SIZE_MB, MODELS, DEFAULT_MODEL } from './constants';
 import { analyzeVideo, processUserCommand, uploadVideo } from './services/geminiService';
 import { Button } from './components/Button';
 import { ClipCard, SkeletonClipCard } from './components/ClipCard';
@@ -15,6 +15,9 @@ const App: React.FC = () => {
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
   const [hasPerformedFullAnalysis, setHasPerformedFullAnalysis] = useState(false);
   
+  // Model Selection
+  const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
+
   // Copilot / Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -119,7 +122,7 @@ const App: React.FC = () => {
       setAppState(AppState.ANALYZING);
       setStatusMessage("Finding best moments...");
       
-      const data = await analyzeVideo(uri, file.type, (partialClips) => {
+      const data = await analyzeVideo(uri, file.type, selectedModel, (partialClips) => {
         setAnalysisData(prev => ({
           overallSummary: prev?.overallSummary || '',
           clips: partialClips
@@ -177,7 +180,8 @@ const App: React.FC = () => {
         uri, 
         file.type, 
         userMsg.content, 
-        analysisData?.clips || []
+        analysisData?.clips || [],
+        selectedModel
       );
 
       const aiMsg: ChatMessage = {
@@ -651,7 +655,22 @@ const App: React.FC = () => {
               </div>
               <p className="hidden md:block text-sm text-slate-400 font-medium italic border-l border-slate-700 pl-4">Talk to your video. Watch it transform.</p>
             </div>
-            {file && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
+            
+            <div className="flex items-center gap-4">
+                {/* Model Selector Dropdown */}
+                {file && (
+                    <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        className="bg-slate-800 text-slate-300 border border-slate-700 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer hover:bg-slate-750 transition-colors"
+                        title="Select AI Model"
+                    >
+                        <option value={MODELS.FLASH}>⚡ Gemini 3 Flash (Fast)</option>
+                        <option value={MODELS.PRO}>🧠 Gemini 3 Pro (Smart)</option>
+                    </select>
+                )}
+                {file && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
+            </div>
           </div>
         </header>
 
