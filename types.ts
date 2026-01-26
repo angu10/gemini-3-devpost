@@ -29,6 +29,15 @@ export interface AnalysisResponse {
   overallSummary: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
+
+export type PlayerMode = 'FULL' | 'SINGLE' | 'REEL';
+
 export interface SearchState {
   isSearching: boolean;
   query: string;
@@ -50,7 +59,13 @@ export interface VirtualEdit {
   isActive: boolean;
   description: string;
   keepSegments: TimeRange[];
-  filterStyle?: string; // CSS filter string e.g., "contrast(1.1) grayscale(1)"
+  filterStyle?: string; 
   transitionEffect?: 'FADE_BLACK' | 'FLASH_WHITE' | 'ZOOM' | 'NONE';
   youtubeMetadata?: YouTubeMetadata;
+}
+
+export interface CopilotResponse {
+  intent: 'SEARCH' | 'EDIT' | 'REEL_ADD' | 'REEL_REMOVE' | 'REEL_CLEAR' | 'UNKNOWN';
+  message: string;
+  data?: any;
 }

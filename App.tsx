@@ -1,42 +1,59 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Clip, AppState, AnalysisResponse, SearchState, VirtualEdit } from './types';
+import { Clip, AppState, AnalysisResponse, SearchState, VirtualEdit, ChatMessage, PlayerMode } from './types';
 import { MAX_FILE_SIZE_MB } from './constants';
 import { analyzeVideo, processUserCommand, uploadVideo } from './services/geminiService';
 import { Button } from './components/Button';
 import { ClipCard, SkeletonClipCard } from './components/ClipCard';
 
 const App: React.FC = () => {
+  // --- STATE ---
   const [file, setFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [fileUri, setFileUri] = useState<string | null>(null);
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
   
-  // Player State
+  // Copilot / Chat State
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isProcessingChat, setIsProcessingChat] = useState(false);
+
+  // Timeline / Reel State
+  const [reel, setReel] = useState<Clip[]>([]);
+  const [playerMode, setPlayerMode] = useState<PlayerMode>('FULL');
+  const [reelCurrentIndex, setReelCurrentIndex] = useState(0);
+
+  // Legacy/Compatibility State
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [downloadingClipId, setDownloadingClipId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
   const [isExportingSmart, setIsExportingSmart] = useState<boolean>(false);
-  
-  // Smart Features State
-  const [searchState, setSearchState] = useState<SearchState>({ isSearching: false, query: '' });
   const [virtualEdit, setVirtualEdit] = useState<VirtualEdit | null>(null);
   
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("Processing...");
 
+  // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const processingVideoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // --- EFFECTS ---
 
   useEffect(() => {
     return () => {
-      if (videoUrl) {
-        URL.revokeObjectURL(videoUrl);
-      }
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
     };
   }, [videoUrl]);
+
+  // Scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory]);
+
+  // --- HANDLERS ---
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -58,9 +75,13 @@ const App: React.FC = () => {
     setAppState(AppState.READY);
     setErrorMsg(null);
     setAnalysisData(null);
-    setActiveClipId(null);
-    setVirtualEdit(null);
-    setSearchState({ isSearching: false, query: '' });
+    setChatHistory([{
+      id: 'welcome',
+      role: 'assistant',
+      content: "Hi! I'm your Highlight Reel Copilot. Upload your video, and I'll help you find clips and build a montage. Try saying 'Find the funny parts' or 'Add the intro to my reel'.",
+      timestamp: Date.now()
+    }]);
+    setReel([]);
   };
 
   const ensureFileUploaded = async (currentFile: File): Promise<string> => {
@@ -74,8 +95,6 @@ const App: React.FC = () => {
   const handleAnalyze = async () => {
     if (!file) return;
     setErrorMsg(null);
-    
-    // Reset Analysis Data but keep placeholders ready
     setAnalysisData({ clips: [], overallSummary: '' });
 
     try {
@@ -92,87 +111,163 @@ const App: React.FC = () => {
       
       setAnalysisData(data);
       setAppState(AppState.READY);
+      setChatHistory(prev => [...prev, {
+        id: `analysis-${Date.now()}`,
+        role: 'assistant',
+        content: `I found ${data.clips.length} engaging clips! You can click them to play, or tell me "Add the first clip to the reel".`,
+        timestamp: Date.now()
+      }]);
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || "Failed to analyze video. Please try again.");
+      setErrorMsg(err.message || "Failed to analyze video.");
       setAppState(AppState.ERROR);
     }
   };
 
-  const handleCommand = async (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !searchState.query.trim() || searchState.isSearching) return;
+    if (!file || !chatInput.trim() || isProcessingChat) return;
 
-    setSearchState(prev => ({ ...prev, isSearching: true, error: null }));
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: chatInput,
+      timestamp: Date.now()
+    };
+
+    setChatHistory(prev => [...prev, userMsg]);
+    setChatInput('');
+    setIsProcessingChat(true);
 
     try {
       const uri = await ensureFileUploaded(file);
       
-      const result = await processUserCommand(uri, file.type, searchState.query);
+      const result = await processUserCommand(
+        uri, 
+        file.type, 
+        userMsg.content, 
+        analysisData?.clips || []
+      );
 
-      if (result.type === 'CLIP') {
-        // Handle Search Result
-        const customClip = result.data as Clip;
+      const aiMsg: ChatMessage = {
+        id: `ai-${Date.now()}`,
+        role: 'assistant',
+        content: result.message,
+        timestamp: Date.now()
+      };
+      setChatHistory(prev => [...prev, aiMsg]);
+
+      // EXECUTE INTENT
+      if (result.intent === 'REEL_ADD' && result.data) {
+        const newClip = result.data as Clip;
+        setReel(prev => [...prev, newClip]);
+        // Also ensure it's in the main list if it's new
         setAnalysisData(prev => {
-          if (!prev) return { overallSummary: "Custom Search Results", clips: [customClip] };
-          return { ...prev, clips: [customClip, ...prev.clips] };
+           if (!prev) return { overallSummary: '', clips: [newClip] };
+           // Avoid duplicates in main list by ID
+           if (prev.clips.some(c => c.id === newClip.id)) return prev;
+           return { ...prev, clips: [newClip, ...prev.clips] };
         });
-        playClip(customClip);
-        setSearchState(prev => ({ ...prev, isSearching: false, query: '' }));
-      } 
-      else if (result.type === 'EDIT') {
-        // Handle Virtual Edit / Director Mode
-        
-        let finalSegments = result.data.keepSegments;
-        if ((!finalSegments || finalSegments.length === 0) && videoRef.current) {
-            finalSegments = [{ start: 0, end: videoRef.current.duration }];
-        }
-
+        playClip(newClip);
+      } else if (result.intent === 'REEL_REMOVE') {
+        const idx = result.data.index;
+        setReel(prev => {
+           if (idx === -1) return prev.slice(0, -1); // Remove last
+           if (idx !== undefined && idx >= 0 && idx < prev.length) {
+              const newReel = [...prev];
+              newReel.splice(idx, 1);
+              return newReel;
+           }
+           return prev;
+        });
+      } else if (result.intent === 'REEL_CLEAR') {
+        setReel([]);
+      } else if (result.intent === 'EDIT' && result.data) {
         setVirtualEdit({
           isActive: true,
           description: result.data.description,
-          keepSegments: finalSegments,
+          keepSegments: [{ start: 0, end: videoRef.current?.duration || 0 }], // Global edit keeps whole video usually
           filterStyle: result.data.filterStyle,
-          transitionEffect: result.data.transitionEffect,
-          youtubeMetadata: result.data.youtubeMetadata
+          transitionEffect: result.data.transitionEffect
         });
-        setActiveClipId(null); // Exit clip mode
-        
-        // Start playing from the beginning of the first valid segment
-        if (videoRef.current && finalSegments.length > 0) {
-          videoRef.current.currentTime = finalSegments[0].start;
-          videoRef.current.play();
-        }
-        
-        setSearchState(prev => ({ ...prev, isSearching: false, query: '' }));
-      } 
-      else {
-        setSearchState(prev => ({ ...prev, isSearching: false, error: "I couldn't understand that request. Try 'Find...', 'Remove...', or 'Make it cinematic'" }));
+      } else if (result.intent === 'SEARCH' && result.data) {
+         playClip(result.data as Clip);
       }
+
     } catch (err) {
-      setSearchState(prev => ({ ...prev, isSearching: false, error: "Failed to process request." }));
+      console.error(err);
+      setChatHistory(prev => [...prev, {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: "Sorry, I had trouble processing that request.",
+        timestamp: Date.now()
+      }]);
+    } finally {
+      setIsProcessingChat(false);
     }
   };
 
+  // --- PLAYBACK LOGIC ---
+
   const playClip = (clip: Clip) => {
     if (!videoRef.current) return;
-    setVirtualEdit(null); // Disable virtual edits when playing a specific clip
+    setPlayerMode('SINGLE');
     setActiveClipId(clip.id);
     videoRef.current.currentTime = clip.startTime;
     videoRef.current.play();
   };
 
-  const triggerTransition = () => {
-    setIsTransitioning(true);
-    setTimeout(() => setIsTransitioning(false), 800); // 800ms transition duration
+  const playReel = () => {
+    if (reel.length === 0 || !videoRef.current) return;
+    setPlayerMode('REEL');
+    setReelCurrentIndex(0);
+    videoRef.current.currentTime = reel[0].startTime;
+    videoRef.current.play();
+    setVirtualEdit(null);
   };
 
-  /**
-   * Export Smart Edited Video
-   * Records the playback of the segments, applying filters, effectively "deleting" the removed parts from the output file.
-   */
-  const handleExportSmartEdit = async () => {
-    if (!virtualEdit || !videoUrl || isExportingSmart) return;
+  const handleTimeUpdate = useCallback(() => {
+    if (!videoRef.current) return;
+    const currentTime = videoRef.current.currentTime;
+
+    // 1. REEL MODE
+    if (playerMode === 'REEL' && reel.length > 0) {
+      const currentClip = reel[reelCurrentIndex];
+      if (currentTime >= currentClip.endTime) {
+        const nextIndex = reelCurrentIndex + 1;
+        if (nextIndex < reel.length) {
+           triggerTransition();
+           setReelCurrentIndex(nextIndex);
+           videoRef.current.currentTime = reel[nextIndex].startTime;
+           videoRef.current.play();
+        } else {
+           // End of reel
+           videoRef.current.pause();
+           setPlayerMode('FULL'); // Reset
+        }
+      }
+      return;
+    }
+
+    // 2. SINGLE CLIP LOOP MODE
+    if (playerMode === 'SINGLE' && activeClipId && analysisData) {
+      const currentClip = analysisData.clips.find(c => c.id === activeClipId);
+      if (currentClip && currentTime >= currentClip.endTime) {
+        videoRef.current.currentTime = currentClip.startTime;
+        videoRef.current.play();
+      }
+    }
+  }, [playerMode, reel, reelCurrentIndex, activeClipId, analysisData]);
+
+  const triggerTransition = () => {
+    setIsTransitioning(true);
+    setTimeout(() => setIsTransitioning(false), 500); 
+  };
+
+  // --- EXPORT LOGIC ---
+  // (Reusing similar logic to Smart Edit but iterating Reel)
+  const handleExportReel = async () => {
+    if (reel.length === 0 || !videoUrl || isExportingSmart) return;
     setIsExportingSmart(true);
 
     const workerVideo = processingVideoRef.current;
@@ -184,17 +279,11 @@ const App: React.FC = () => {
       return;
     }
 
-    // Setup Video
     workerVideo.src = videoUrl;
     await new Promise(r => workerVideo.onloadedmetadata = r);
-    
     canvas.width = workerVideo.videoWidth;
     canvas.height = workerVideo.videoHeight;
-
-    // Setup Recorder
-    const stream = canvas.captureStream(30); // 30 FPS
-    
-    // Add audio track to stream
+    const stream = canvas.captureStream(30); 
     const audioCtx = new AudioContext();
     const source = audioCtx.createMediaElementSource(workerVideo);
     const dest = audioCtx.createMediaStreamDestination();
@@ -205,12 +294,10 @@ const App: React.FC = () => {
     const chunks: BlobPart[] = [];
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
-    // Draw loop (Apply CSS filters here)
+    // Filters?
     let animationFrameId: number;
     const draw = () => {
-      if (virtualEdit.filterStyle) {
-        ctx.filter = virtualEdit.filterStyle;
-      }
+      if (virtualEdit?.filterStyle) ctx.filter = virtualEdit.filterStyle;
       ctx.drawImage(workerVideo, 0, 0, canvas.width, canvas.height);
       animationFrameId = requestAnimationFrame(draw);
     };
@@ -222,14 +309,12 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `smart_edit_${Date.now()}.webm`;
+      a.download = `highlight_reel_${Date.now()}.webm`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       setIsExportingSmart(false);
-      
-      // Cleanup
       workerVideo.pause();
       workerVideo.src = "";
     };
@@ -237,170 +322,26 @@ const App: React.FC = () => {
     mediaRecorder.start();
     draw();
 
-    // Playback Logic: Iterate through segments
     try {
-      for (const segment of virtualEdit.keepSegments) {
-        workerVideo.currentTime = segment.start;
-        // Wait for seek
-        await new Promise<void>(resolve => {
-           const onSeek = () => { workerVideo.removeEventListener('seeked', onSeek); resolve(); };
-           workerVideo.addEventListener('seeked', onSeek);
-        });
-        
+      for (const clip of reel) {
+        workerVideo.currentTime = clip.startTime;
+        await new Promise<void>(r => { const fn = () => { workerVideo.removeEventListener('seeked', fn); r(); }; workerVideo.addEventListener('seeked', fn); });
         await workerVideo.play();
-        
-        // Wait until end of segment
-        await new Promise<void>(resolve => {
-          const checkTime = () => {
-            if (workerVideo.currentTime >= segment.end) {
-               workerVideo.pause();
-               resolve();
-            } else {
-               requestAnimationFrame(checkTime);
-            }
+        await new Promise<void>(r => {
+          const check = () => {
+            if (workerVideo.currentTime >= clip.endTime) { workerVideo.pause(); r(); }
+            else requestAnimationFrame(check);
           };
-          checkTime();
+          check();
         });
       }
       mediaRecorder.stop();
     } catch (e) {
-      console.error("Export failed", e);
+      console.error(e);
       mediaRecorder.stop();
       setIsExportingSmart(false);
     }
   };
-
-  const handleDownloadClip = async (e: React.MouseEvent, clip: Clip) => {
-    e.stopPropagation();
-    if (downloadingClipId) return;
-
-    setDownloadingClipId(clip.id);
-    const workerVideo = processingVideoRef.current;
-    if (!workerVideo || !videoUrl) {
-      setDownloadingClipId(null);
-      return;
-    }
-
-    try {
-      const stream = (workerVideo as any).captureStream ? (workerVideo as any).captureStream() : (workerVideo as any).mozCaptureStream();
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
-      const chunks: BlobPart[] = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${clip.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setDownloadingClipId(null);
-        workerVideo.pause();
-        workerVideo.currentTime = 0;
-        workerVideo.src = ""; 
-        workerVideo.playbackRate = 1.0;
-      };
-
-      workerVideo.src = videoUrl;
-      workerVideo.currentTime = clip.startTime;
-      workerVideo.playbackRate = 2.0;
-      
-      await new Promise<void>((resolve) => {
-        workerVideo.onseeked = () => {
-          workerVideo.onseeked = null;
-          resolve();
-        };
-      });
-
-      mediaRecorder.start();
-      workerVideo.play();
-
-      const checkTime = () => {
-        if (!downloadingClipId && workerVideo.paused) return;
-        if (workerVideo.currentTime >= clip.endTime) {
-          mediaRecorder.stop();
-          workerVideo.pause();
-        } else {
-          requestAnimationFrame(checkTime);
-        }
-      };
-      requestAnimationFrame(checkTime);
-
-    } catch (err) {
-      console.error("Download failed", err);
-      setDownloadingClipId(null);
-      alert("Browser does not support capturing video stream. Please use Chrome or Firefox.");
-    }
-  };
-
-  /**
-   * SMART PLAYER LOGIC
-   * Handles both Clip Looping AND Virtual Edit Skipping
-   */
-  const handleTimeUpdate = useCallback(() => {
-    if (!videoRef.current) return;
-    const currentTime = videoRef.current.currentTime;
-
-    // 1. Priority: Virtual Edit Mode (Skipping parts)
-    if (virtualEdit && virtualEdit.isActive) {
-      const { keepSegments } = virtualEdit;
-      
-      // Check if we are inside a valid segment
-      const currentSegmentIndex = keepSegments.findIndex(
-        seg => currentTime >= seg.start && currentTime < seg.end
-      );
-
-      // If we are INSIDE a segment, check if we are near the end of it
-      if (currentSegmentIndex !== -1) {
-        const currentSegment = keepSegments[currentSegmentIndex];
-        // If we hit the end of this valid segment...
-        if (currentTime >= currentSegment.end - 0.1) { // 0.1s buffer
-             // Jump to the NEXT valid segment
-             const nextSegment = keepSegments[currentSegmentIndex + 1];
-             if (nextSegment) {
-               if (virtualEdit.transitionEffect && virtualEdit.transitionEffect !== 'NONE') {
-                  triggerTransition();
-               }
-               videoRef.current.currentTime = nextSegment.start;
-             } else {
-               // End of all segments
-               videoRef.current.pause();
-             }
-        }
-      } else {
-        // If we are NOT in a valid segment (user scrubbed into a "deleted" zone)
-        // Find the next upcoming valid segment
-        const nextSegment = keepSegments.find(seg => seg.start > currentTime);
-        if (nextSegment) {
-          if (virtualEdit.transitionEffect && virtualEdit.transitionEffect !== 'NONE') {
-            triggerTransition();
-          }
-          videoRef.current.currentTime = nextSegment.start;
-        } else {
-          // No more valid segments after this point
-          if (!videoRef.current.paused) videoRef.current.pause();
-        }
-      }
-      return;
-    }
-
-    // 2. Fallback: Active Clip Mode (Looping)
-    if (activeClipId && analysisData) {
-      const currentClip = analysisData.clips.find(c => c.id === activeClipId);
-      if (!currentClip) return;
-
-      if (currentTime >= currentClip.endTime) {
-        videoRef.current.currentTime = currentClip.startTime;
-        videoRef.current.play();
-      }
-    }
-  }, [activeClipId, analysisData, virtualEdit]);
 
   const reset = () => {
     setFile(null);
@@ -409,36 +350,28 @@ const App: React.FC = () => {
     setAnalysisData(null);
     setAppState(AppState.IDLE);
     setActiveClipId(null);
-    setDownloadingClipId(null);
-    setVirtualEdit(null);
-    setIsTransitioning(false);
+    setChatHistory([]);
+    setReel([]);
+    setPlayerMode('FULL');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
     <div className="min-h-screen bg-[#0a0e1a] text-slate-50 flex flex-col relative overflow-hidden">
-      {/* Advanced Animated Background */}
+      {/* Background (Same as before) */}
       <div className="fixed inset-0 pointer-events-none">
-        {/* Animated mesh gradient */}
         <div className="absolute inset-0 bg-gradient-to-br from-blue-950/40 via-purple-950/40 to-pink-950/40" />
-
-        {/* Multiple floating orbs with different animations */}
         <div className="absolute top-20 right-20 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px] animate-pulse" />
         <div className="absolute bottom-40 left-40 w-80 h-80 bg-purple-500/20 rounded-full blur-[100px] animate-pulse" style={{animationDelay: '1.5s'}} />
-        <div className="absolute top-60 left-1/3 w-72 h-72 bg-pink-500/15 rounded-full blur-[90px] animate-pulse" style={{animationDelay: '3s'}} />
-
-        {/* Grid overlay */}
         <div className="absolute inset-0" style={{backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(148,163,184,0.08) 1px, transparent 0)', backgroundSize: '40px 40px'}} />
-
-        {/* Scanning line effect */}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/5 to-transparent h-32 animate-scan" />
       </div>
 
-      <div className="relative z-10 flex flex-col flex-1 w-full">
+      <div className="relative z-10 flex flex-col flex-1 w-full h-screen">
         <video ref={processingVideoRef} className="fixed top-0 left-0 w-1 h-1 pointer-events-none opacity-0" muted crossOrigin="anonymous"/>
 
-        <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        {/* HEADER */}
+        <header className="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 h-16 flex-none z-50">
+          <div className="max-w-full mx-auto px-6 h-full flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
@@ -450,250 +383,239 @@ const App: React.FC = () => {
                   SmartClip.ai
                 </h1>
               </div>
-              <div className="hidden md:block h-6 w-px bg-slate-700"></div>
-              <p className="hidden md:block text-sm text-slate-400 font-medium italic">Talk to your video. Watch it transform.</p>
+              <p className="hidden md:block text-sm text-slate-400 font-medium italic border-l border-slate-700 pl-4">Talk to your video. Watch it transform.</p>
             </div>
             {file && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl mx-auto w-full p-6 flex flex-col items-center">
-          {!file && (
-            <>
-              {/* Feature Showcase Section */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 max-w-6xl w-full">
-                {/* Card 1 */}
-                <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
-                  <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <span className="text-2xl">🎯</span>
-                  </div>
-                  <div className="inline-block px-2 py-1 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-bold uppercase tracking-wider mb-2">
-                    Powered by Gemini 3
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-2">Viral Clip Discovery</h3>
-                  <p className="text-sm text-slate-400 leading-relaxed">
-                    Gemini 3 Pro analyzes your video and extracts 5-15 clips with virality scores, focused on hooks and retention.
-                  </p>
-                </div>
+        {/* MAIN CONTENT AREA */}
+        <div className="flex flex-1 overflow-hidden">
+          
+          {/* LEFT: Video Player & Upload */}
+          <div className={`flex-1 flex flex-col p-6 overflow-y-auto ${!file ? 'items-center justify-center' : ''}`}>
+             {!file ? (
+               // UPLOAD SCREEN (Refined)
+               <div className="w-full max-w-6xl mx-auto flex flex-col items-center justify-center py-8">
+                 
+                 {/* Hero Text */}
+                 <div className="text-center mb-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                   <h1 className="text-5xl md:text-7xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 mb-6 tracking-tight">
+                     Talk to your video.
+                     <br />
+                     Watch it transform.
+                   </h1>
+                   <p className="text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
+                     Upload any long-form video. Chat with our AI Copilot to find viral moments, 
+                     apply styles, and build highlight reels instantly. No editing skills required.
+                   </p>
+                 </div>
 
-                {/* Card 2 */}
-                <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
-                   <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <span className="text-2xl">🎬</span>
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-2">Director Mode</h3>
-                  <p className="text-sm text-slate-400 leading-relaxed mb-3">
-                    Edit with natural language. Just type commands to edit your video instantly.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Cinematic"</span>
-                    <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded border border-purple-500/20">"Remove ums"</span>
-                  </div>
-                </div>
+                 {/* Upload Box */}
+                 <div className="w-full max-w-3xl mb-16 relative group animate-in fade-in zoom-in duration-700 delay-150">
+                    <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
+                    <div className="relative w-full flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 transition-colors p-12">
+                      <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 shadow-inner ring-1 ring-slate-700">
+                        <svg className="w-10 h-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                      </div>
+                      <h2 className="text-2xl font-semibold mb-2 text-white">Upload your video</h2>
+                      <p className="text-slate-400 mb-8 max-w-md text-center">Drag & drop or select a video (max {MAX_FILE_SIZE_MB}MB).</p>
+                      <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange}/>
+                      <Button onClick={() => fileInputRef.current?.click()} className="px-8 py-3 text-lg shadow-blue-500/20 w-48">Select Video</Button>
+                      <p className="mt-4 text-xs text-slate-500">Powered by Gemini 1.5 Pro • 1M+ Context Window</p>
+                    </div>
+                 </div>
 
-                {/* Card 3 */}
-                <div className="bg-slate-800/40 backdrop-blur border border-slate-700/50 p-6 rounded-2xl hover:bg-slate-800/60 transition-colors group">
-                   <div className="w-10 h-10 rounded-full bg-pink-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                    <span className="text-2xl">📱</span>
-                  </div>
-                  <div className="inline-block px-2 py-1 rounded-full bg-pink-500/10 text-pink-400 text-[10px] font-bold uppercase tracking-wider mb-2">
-                    SEO Optimized
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-2">Smart Export</h3>
-                  <p className="text-sm text-slate-400 leading-relaxed">
-                    Auto-generate YouTube metadata, titles, and tags. Export videos with baked-in edits and color grading.
-                  </p>
-                </div>
-              </div>
+                 {/* Feature Showcase Grid */}
+                 <div className="grid md:grid-cols-3 gap-8 w-full max-w-5xl animate-in fade-in slide-in-from-bottom-8 duration-700 delay-300">
+                    <div className="bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
+                       <div className="w-12 h-12 bg-blue-500/10 rounded-lg flex items-center justify-center mb-4 text-blue-400">
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                       </div>
+                       <h3 className="text-lg font-bold text-white mb-2">Auto-Discovery</h3>
+                       <p className="text-slate-400 text-sm leading-relaxed">Instantly identifies viral-worthy moments, providing titles, virality scores, and reasoning.</p>
+                    </div>
+                    <div className="bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
+                       <div className="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-purple-400">
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+                       </div>
+                       <h3 className="text-lg font-bold text-white mb-2">Chat Copilot</h3>
+                       <p className="text-slate-400 text-sm leading-relaxed">Just ask. "Find the funny part," "Make a summary," or "Add the intro." No timeline dragging required.</p>
+                    </div>
+                    <div className="bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
+                       <div className="w-12 h-12 bg-green-500/10 rounded-lg flex items-center justify-center mb-4 text-green-400">
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" /></svg>
+                       </div>
+                       <h3 className="text-lg font-bold text-white mb-2">Instant Reels</h3>
+                       <p className="text-slate-400 text-sm leading-relaxed">Copilot stitches clips together automatically. Watch your montage evolve in real-time as you chat.</p>
+                    </div>
+                 </div>
 
-              {/* Upload Section */}
-              <div className="w-full max-w-4xl flex flex-col items-center justify-center border-2 border-dashed border-slate-700 rounded-2xl bg-slate-800/30 hover:bg-slate-800/50 transition-colors p-10">
-                <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-6 shadow-inner">
-                  <svg className="w-10 h-10 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                  </svg>
-                </div>
-                <h2 className="text-2xl font-semibold mb-2">Upload your video</h2>
-                <p className="text-slate-400 mb-8 max-w-md text-center">Upload a video (max {MAX_FILE_SIZE_MB}MB) and let Gemini 3 Pro find the viral moments.</p>
-                <input type="file" accept="video/*" className="hidden" ref={fileInputRef} onChange={handleFileChange}/>
-                <Button onClick={() => fileInputRef.current?.click()} className="px-8 py-3 text-lg shadow-blue-500/20">Select Video File</Button>
-                {errorMsg && <div className="mt-4 p-3 bg-red-900/30 border border-red-800 text-red-200 rounded-lg text-sm">{errorMsg}</div>}
-              </div>
-            </>
-          )}
-
-          {file && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)] w-full">
-              <div className="lg:col-span-2 flex flex-col gap-4">
-                <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl ring-1 ring-slate-800 aspect-video group">
-                  {videoUrl && (
+               </div>
+             ) : (
+               // VIDEO PLAYER SCREEN
+               <div className="w-full max-w-5xl mx-auto flex flex-col h-full">
+                 <div className="relative bg-black rounded-2xl overflow-hidden shadow-2xl ring-1 ring-slate-800 flex-1 min-h-[400px]">
                     <video 
                       ref={videoRef} 
-                      src={videoUrl} 
-                      className="w-full h-full object-contain transition-all duration-500" 
+                      src={videoUrl || ''} 
+                      className="w-full h-full object-contain" 
                       style={{ filter: virtualEdit?.filterStyle || 'none' }}
                       controls 
                       onTimeUpdate={handleTimeUpdate}
                     />
-                  )}
-                  
-                  {/* Transition Overlay */}
-                  <div 
-                    className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 ${isTransitioning ? 'opacity-100' : 'opacity-0'}`}
-                  />
+                    
+                    {/* Transition Overlay */}
+                    <div className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 ${isTransitioning ? 'opacity-100' : 'opacity-0'}`} />
 
-                  {/* Visual Indicator for Active Virtual Edit / Director Mode */}
-                  {virtualEdit && virtualEdit.isActive && (
-                    <div className="absolute top-4 right-4 flex items-center gap-2 z-20">
-                      <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg backdrop-blur flex items-center gap-2 animate-pulse">
-                        <span>🎬 Director Mode: {virtualEdit.description}</span>
-                        <button onClick={() => setVirtualEdit(null)} className="hover:text-purple-200 bg-black/20 rounded-full p-0.5"><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-                      </div>
-                      {/* Export Button for Edited Video */}
-                      <button 
-                        onClick={handleExportSmartEdit} 
-                        disabled={isExportingSmart}
-                        className="bg-white text-purple-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-lg hover:bg-purple-100 transition-colors flex items-center gap-1 disabled:opacity-50"
-                      >
-                        {isExportingSmart ? (
-                          <>
-                            <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                            Processing...
-                          </>
-                        ) : (
-                          <>
-                             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                             Export Video
-                          </>
-                        )}
-                      </button>
+                    {/* Mode Indicators */}
+                    <div className="absolute top-4 left-4 flex gap-2">
+                       {playerMode === 'REEL' && <span className="bg-red-600 text-white px-2 py-1 rounded text-xs font-bold animate-pulse">PLAYING REEL</span>}
+                       {playerMode === 'SINGLE' && <span className="bg-blue-600 text-white px-2 py-1 rounded text-xs font-bold">LOOPING CLIP</span>}
                     </div>
-                  )}
 
-                  {(appState === AppState.ANALYZING || appState === AppState.UPLOADING) && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-10 flex-col">
-                      <div className="relative w-24 h-24 mb-4">
-                        <div className="absolute inset-0 border-t-4 border-blue-500 rounded-full animate-spin"></div>
-                        <div className="absolute inset-2 border-r-4 border-purple-500 rounded-full animate-spin animation-delay-150"></div>
-                        <div className="absolute inset-4 border-b-4 border-pink-500 rounded-full animate-spin animation-delay-300"></div>
+                    {/* Loading Overlay */}
+                    {(appState === AppState.ANALYZING || appState === AppState.UPLOADING) && (
+                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-10 flex-col">
+                        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <p className="font-semibold">{statusMessage}</p>
                       </div>
-                      <p className="text-lg font-semibold animate-pulse">{statusMessage}</p>
-                      <p className="text-sm text-slate-400 mt-2">{appState === AppState.UPLOADING ? "Sending video to Gemini..." : "Identifying viral moments..."}</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Info Bar / YouTube Metadata */}
-                {virtualEdit?.youtubeMetadata ? (
-                  <div className="bg-gradient-to-br from-slate-800 to-slate-900 p-5 rounded-xl border border-slate-700 shadow-xl">
-                    <div className="flex items-center justify-between mb-4">
-                       <h3 className="text-red-500 font-bold flex items-center gap-2"><svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg> YouTube Export Metadata</h3>
-                       <Button variant="secondary" className="text-xs py-1 px-3">Copy</Button>
-                    </div>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-xs text-slate-500 uppercase font-semibold">Title</label>
-                        <p className="text-lg font-medium text-white">{virtualEdit.youtubeMetadata.title}</p>
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-500 uppercase font-semibold">Description</label>
-                        <p className="text-sm text-slate-300 whitespace-pre-wrap">{virtualEdit.youtubeMetadata.description}</p>
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-500 uppercase font-semibold">Tags</label>
-                        <div className="flex flex-wrap gap-2 mt-1">
-                          {virtualEdit.youtubeMetadata.tags.map(tag => (
-                            <span key={tag} className="text-xs bg-slate-700/50 text-blue-300 px-2 py-1 rounded-full">#{tag}</span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* Default Info Bar */
-                  <div className="flex items-center justify-between bg-slate-800 p-4 rounded-xl border border-slate-700">
-                    <div>
-                      <h3 className="font-semibold text-slate-200 truncate max-w-md">{file.name}</h3>
-                      <p className="text-xs text-slate-400">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                    </div>
-                    {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
-                      <Button onClick={handleAnalyze} className="shadow-lg shadow-blue-500/20"><span className="mr-2">✨</span> Generate Clips</Button>
                     )}
-                    {analysisData && <div className="text-sm text-slate-400">Found <span className="text-white font-bold">{analysisData.clips.length}</span> clips</div>}
-                  </div>
-                )}
+                 </div>
 
-                {analysisData?.overallSummary && !virtualEdit?.youtubeMetadata && (
-                  <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Video Summary</h4>
-                    <p className="text-slate-300 text-sm leading-relaxed">{analysisData.overallSummary}</p>
+                 {/* Available Clips (Mini Drawer) */}
+                 {analysisData && (
+                   <div className="mt-4 p-4 bg-slate-900/50 rounded-xl border border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                         <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Discovered Clips</h3>
+                         <span className="text-xs text-slate-500">{analysisData.clips.length} found</span>
+                      </div>
+                      <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+                         {analysisData.clips.map(clip => (
+                           <div key={clip.id} onClick={() => playClip(clip)} className="flex-none w-48 bg-slate-800 p-2 rounded-lg cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700">
+                              <p className="text-sm font-medium truncate">{clip.title}</p>
+                              <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                                <span>{Math.round(clip.endTime - clip.startTime)}s</span>
+                                <span className="text-green-400">★ {clip.viralityScore}</span>
+                              </div>
+                           </div>
+                         ))}
+                      </div>
+                   </div>
+                 )}
+               </div>
+             )}
+          </div>
+
+          {/* RIGHT: Chat Interface */}
+          {file && (
+            <div className="w-96 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-20">
+              <div className="p-4 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-10">
+                <h2 className="font-bold text-slate-200">Highlight Copilot</h2>
+                <p className="text-xs text-slate-500">Ask to find moments or build your reel.</p>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                {chatHistory.map(msg => (
+                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                      msg.role === 'user' 
+                        ? 'bg-blue-600 text-white rounded-br-none' 
+                        : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'
+                    }`}>
+                      {msg.content}
+                    </div>
+                  </div>
+                ))}
+                {isProcessingChat && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-800 rounded-2xl px-4 py-3 rounded-bl-none border border-slate-700">
+                      <div className="flex gap-1.5">
+                        <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                        <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
+                      </div>
+                    </div>
                   </div>
                 )}
+                <div ref={chatEndRef} />
               </div>
 
-              <div className="lg:col-span-1 bg-slate-800/30 rounded-2xl border border-slate-700/50 flex flex-col overflow-hidden">
-                <div className="p-4 border-b border-slate-700 bg-slate-800/80 backdrop-blur">
-                  <form onSubmit={handleCommand} className="relative">
-                    <input
-                      type="text"
-                      placeholder="Search OR 'Make it cinematic...'"
-                      className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-4 pr-10 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-slate-500 transition-all"
-                      value={searchState.query}
-                      onChange={(e) => setSearchState(prev => ({ ...prev, query: e.target.value }))}
-                      disabled={searchState.isSearching || appState === AppState.ANALYZING || appState === AppState.UPLOADING}
-                    />
-                    <button type="submit" disabled={searchState.isSearching || !searchState.query.trim()} className="absolute right-1.5 top-1.5 p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                      {searchState.isSearching ? (
-                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                      )}
-                    </button>
-                  </form>
-                  {searchState.error && <p className="text-xs text-red-400 mt-2 ml-1">{searchState.error}</p>}
-                  <div className="mt-2 flex gap-2 flex-wrap">
-                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Try:</span>
-                    <button onClick={() => setSearchState(p => ({...p, query: "Make it look cinematic & professional"}))} className="text-[10px] text-purple-400 hover:text-purple-300 bg-purple-900/20 px-1.5 py-0.5 rounded border border-purple-900/50 transition-colors">"Cinematic Look"</button>
-                    <button onClick={() => setSearchState(p => ({...p, query: "Remove silences and ums"}))} className="text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 px-1.5 py-0.5 rounded border border-blue-900/50 transition-colors">"Remove 'um'"</button>
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                  {appState === AppState.ERROR && (
-                     <div className="p-4 bg-red-900/20 border border-red-800 rounded-lg text-red-200 text-sm">
-                       {errorMsg}
-                       <Button variant="secondary" onClick={handleAnalyze} className="w-full mt-3">Retry Analysis</Button>
-                     </div>
-                  )}
-                  {!analysisData && appState !== AppState.ANALYZING && appState !== AppState.UPLOADING && (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-500 opacity-60">
-                       <svg className="w-12 h-12 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                       </svg>
-                       <p className="text-sm">Ready to analyze audio & video</p>
-                    </div>
-                  )}
-                  {analysisData && analysisData.clips.map((clip) => (
-                    <ClipCard 
-                      key={clip.id} 
-                      clip={clip} 
-                      isActive={activeClipId === clip.id}
-                      isDownloading={downloadingClipId === clip.id}
-                      onClick={() => playClip(clip)}
-                      onDownload={(e) => handleDownloadClip(e, clip)}
-                    />
-                  ))}
-                  {/* Loading State for Streamed Clips */}
-                  {appState === AppState.ANALYZING && (
-                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                      <SkeletonClipCard />
-                    </div>
-                  )}
+              <div className="p-4 border-t border-slate-800 bg-slate-900">
+                <form onSubmit={handleSendMessage} className="relative">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    placeholder="Type a command..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-full pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  />
+                  <button type="submit" disabled={!chatInput.trim() || isProcessingChat} className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-500 disabled:opacity-50 transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg>
+                  </button>
+                </form>
+                <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
+                   <button onClick={() => setChatInput("Add the funniest moment")} className="whitespace-nowrap text-xs bg-slate-800 px-2 py-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">"Add funny part"</button>
+                   <button onClick={() => setChatInput("Create a summary reel")} className="whitespace-nowrap text-xs bg-slate-800 px-2 py-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">"Create summary"</button>
                 </div>
               </div>
             </div>
           )}
-        </main>
+        </div>
+
+        {/* BOTTOM: Timeline Reel */}
+        {file && reel.length > 0 && (
+          <div className="h-48 bg-slate-950 border-t border-slate-800 flex flex-col shadow-[0_-5px_20px_rgba(0,0,0,0.5)] z-40 animate-in slide-in-from-bottom duration-500">
+             <div className="h-10 bg-slate-900 border-b border-slate-800 px-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                   <span className="text-xs font-bold uppercase tracking-wider text-blue-400">Timeline Reel</span>
+                   <span className="bg-slate-800 text-slate-400 text-[10px] px-2 py-0.5 rounded-full">{reel.length} clips • {Math.round(reel.reduce((acc, c) => acc + (c.endTime - c.startTime), 0))}s total</span>
+                </div>
+                <div className="flex items-center gap-3">
+                   <button onClick={playReel} className="flex items-center gap-2 text-xs font-bold bg-white text-slate-900 px-3 py-1.5 rounded hover:bg-blue-50 transition-colors">
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                      Play Reel
+                   </button>
+                   <button onClick={handleExportReel} disabled={isExportingSmart} className="flex items-center gap-2 text-xs font-bold bg-slate-800 text-slate-300 px-3 py-1.5 rounded hover:bg-slate-700 transition-colors border border-slate-700">
+                      {isExportingSmart ? (
+                        <span className="animate-spin">⌛</span>
+                      ) : (
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      )}
+                      Export
+                   </button>
+                   <button onClick={() => setReel([])} className="text-slate-500 hover:text-red-400 p-1"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                </div>
+             </div>
+             
+             <div className="flex-1 p-4 overflow-x-auto custom-scrollbar bg-[url('https://grainy-gradients.vercel.app/noise.svg')] bg-opacity-5">
+                <div className="flex gap-1 h-full items-center">
+                   {reel.map((clip, idx) => (
+                      <div key={`${clip.id}-${idx}`} className="relative group flex-none h-24 bg-slate-800 rounded-md border border-slate-600 hover:border-blue-400 cursor-pointer overflow-hidden transition-all hover:scale-105" style={{width: `${Math.max(80, (clip.endTime - clip.startTime) * 10)}px`}} onClick={() => playClip(clip)}>
+                         <div className="absolute top-1 left-2 text-[10px] font-bold truncate w-full pr-4 z-10 text-white shadow-black drop-shadow-md">{clip.title}</div>
+                         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 transition-opacity">
+                            <svg className="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                         </div>
+                         <div className="absolute bottom-1 right-2 text-[9px] bg-black/50 px-1 rounded text-white">{Math.round(clip.endTime - clip.startTime)}s</div>
+                         {/* Visual waveform placeholder */}
+                         <div className="absolute bottom-0 left-0 right-0 h-8 opacity-20 flex items-end gap-0.5 px-1">
+                            {Array.from({length: 20}).map((_, i) => (
+                               <div key={i} className="flex-1 bg-white" style={{height: `${Math.random() * 100}%`}}></div>
+                            ))}
+                         </div>
+                      </div>
+                   ))}
+                   {/* Add Placeholder */}
+                   <div className="h-24 w-24 rounded-md border-2 border-dashed border-slate-700 flex items-center justify-center text-slate-600 text-xs text-center px-2">
+                      Tell copilot to add more
+                   </div>
+                </div>
+             </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

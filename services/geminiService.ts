@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { GEMINI_MODEL, SAMPLE_PROMPT } from '../constants';
-import { AnalysisResponse, Clip, TimeRange, YouTubeMetadata } from '../types';
+import { AnalysisResponse, Clip, TimeRange, YouTubeMetadata, CopilotResponse } from '../types';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -211,55 +211,58 @@ export const analyzeVideo = async (
 };
 
 /**
- * Unified Command Processor
- * Decides if the user wants to FIND a clip or EDIT the video (Virtual Edit/Director Mode).
+ * Unified Command Processor (Copilot)
  */
 export const processUserCommand = async (
   fileUri: string, 
   mimeType: string, 
-  query: string
-): Promise<{ type: 'CLIP' | 'EDIT' | 'NONE', data: any }> => {
+  query: string,
+  existingClips: Clip[] = []
+): Promise<CopilotResponse> => {
   try {
     const prompt = `
-      You are an intelligent video assistant acting as a Professional AI Director.
+      You are an intelligent Video Editor Copilot.
       USER QUERY: "${query}"
 
+      CONTEXT - EXISTING CLIPS FOUND:
+      ${JSON.stringify(existingClips.map((c, i) => ({ index: i, title: c.title, start: c.startTime, end: c.endTime, id: c.id })))}
+
       TASK:
-      Determine if the user wants to:
-      1. SEARCH/FIND a specific moment.
-      2. EDIT/MODIFY the video (Cuts, Styles, Transitions, Metadata).
+      Determine the user's intent and execute the appropriate action.
+      
+      INTENTS:
+      
+      1. REEL_ADD: User wants to add a clip to the Montage/Timeline/Reel.
+         - If they reference an existing clip (e.g., "Add the funny one", "Add clip 1"), use its ID.
+         - If they want a NEW segment (e.g., "Add the part where he smiles"), define the new start/end times.
+         - Return 'intent': 'REEL_ADD', and 'clip' data.
+      
+      2. REEL_REMOVE: User wants to remove a clip from the Montage/Reel.
+         - Return 'intent': 'REEL_REMOVE', and 'clipIndex' (if they say "remove the last one") or 'clipId'.
+      
+      3. REEL_CLEAR: User wants to clear the timeline.
+         - Return 'intent': 'REEL_CLEAR'.
+
+      4. EDIT: Global edits like filters or transitions. (e.g., "Make it cinematic").
+         - Return 'intent': 'EDIT' and 'filterStyle'/'transitionEffect'.
+
+      5. SEARCH: User just wants to see/find a clip but NOT add it to the reel yet.
+         - Return 'intent': 'SEARCH'.
 
       OUTPUT RULES:
-      
-      IF SEARCH/FIND:
-      - Return 'intent': 'SEARCH' and the single best clip.
-
-      IF EDIT/MODIFY (e.g. "Remove ums", "Remove filler words", "Make it cinematic", "Export for YouTube"):
-      - Return 'intent': 'EDIT'.
-      - 'keepSegments': List of time ranges to KEEP. 
-         * CRITICAL: If the user asks to "Remove filler words", "Remove ums", or "Remove silences", you MUST identify the timestamps of those errors and return the COMPLEMENT (the parts to keep).
-         * Example: If "um" is at 0:05-0:07, keepSegments should be [{start: 0, end: 5}, {start: 7, end: duration}].
-         * If the user only asks for style (e.g. "Make it black and white"), return the FULL video duration as one segment (0 to duration).
-      - 'filterStyle': Generate a CSS filter string if requested (e.g. "grayscale(1) contrast(1.2)" for noir, "saturate(1.3) contrast(1.1)" for vibrant). Default to null.
-      - 'transitionEffect': If the user mentions transitions or "professional" editing, pick one: 'FADE_BLACK', 'FLASH_WHITE', 'ZOOM'. Default to null.
-      - 'youtubeMetadata': If the user mentions "Export", "YouTube", "Title", or "SEO", generate optimized metadata.
-
-      CSS FILTER GUIDE:
-      - Cinematic/Professional: "contrast(1.1) saturate(0.9) sepia(0.2)"
-      - Noir/B&W: "grayscale(1) contrast(1.2)"
-      - Vibrant/Vlog: "saturate(1.4) brightness(1.05)"
-      - Vintage: "sepia(0.6) contrast(0.9) brightness(0.9)"
+      - Be conversational in the 'message' field.
     `;
 
     const responseSchema = {
       type: Type.OBJECT,
       properties: {
-        intent: { type: Type.STRING, enum: ['SEARCH', 'EDIT', 'UNKNOWN'] },
-        // For SEARCH
-        found: { type: Type.BOOLEAN },
+        intent: { type: Type.STRING, enum: ['SEARCH', 'EDIT', 'REEL_ADD', 'REEL_REMOVE', 'REEL_CLEAR', 'UNKNOWN'] },
+        message: { type: Type.STRING },
         clip: {
           type: Type.OBJECT,
+          nullable: true,
           properties: {
+            id: { type: Type.STRING },
             title: { type: Type.STRING },
             description: { type: Type.STRING },
             startTime: { type: Type.NUMBER },
@@ -269,31 +272,15 @@ export const processUserCommand = async (
             tags: { type: Type.ARRAY, items: { type: Type.STRING } }
           }
         },
-        // For EDIT (Director Mode)
+        // For REEL_REMOVE
+        removeIndex: { type: Type.INTEGER, nullable: true, description: "-1 for last item, 0 for first" },
+        
+        // For EDIT
         editDescription: { type: Type.STRING },
-        keepSegments: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              start: { type: Type.NUMBER },
-              end: { type: Type.NUMBER }
-            }
-          }
-        },
         filterStyle: { type: Type.STRING, nullable: true },
         transitionEffect: { type: Type.STRING, enum: ['FADE_BLACK', 'FLASH_WHITE', 'ZOOM', 'NONE'], nullable: true },
-        youtubeMetadata: {
-          type: Type.OBJECT,
-          nullable: true,
-          properties: {
-            title: { type: Type.STRING },
-            description: { type: Type.STRING },
-            tags: { type: Type.ARRAY, items: { type: Type.STRING } }
-          }
-        }
       },
-      required: ['intent']
+      required: ['intent', 'message']
     };
 
     const response = await ai.models.generateContent({
@@ -311,37 +298,44 @@ export const processUserCommand = async (
     });
 
     const text = response.text;
-    if (!text) return { type: 'NONE', data: null };
+    if (!text) return { intent: 'UNKNOWN', message: "I didn't catch that." };
     
     const result = JSON.parse(text);
 
-    if (result.intent === 'SEARCH' && result.found && result.clip) {
-      return { 
-        type: 'CLIP', 
-        data: {
-          ...result.clip,
-          id: `custom-${Date.now()}`,
-          category: 'Custom'
+    // Normalize Data
+    if (result.intent === 'REEL_ADD' && result.clip) {
+        // If ID matches existing, use it, otherwise generate temp ID
+        if (!result.clip.id) result.clip.id = `custom-${Date.now()}`;
+        if (!result.clip.category) result.clip.category = 'Custom';
+        
+        return {
+            intent: 'REEL_ADD',
+            message: result.message,
+            data: result.clip
+        };
+    }
+    
+    if (result.intent === 'REEL_REMOVE') {
+        return {
+            intent: 'REEL_REMOVE',
+            message: result.message,
+            data: { index: result.removeIndex }
         }
-      };
     }
 
     if (result.intent === 'EDIT') {
-      return {
-        type: 'EDIT',
-        data: {
-          description: result.editDescription || query,
-          keepSegments: result.keepSegments && result.keepSegments.length > 0 
-            ? result.keepSegments.sort((a: TimeRange, b: TimeRange) => a.start - b.start) 
-            : [], 
-          filterStyle: result.filterStyle,
-          transitionEffect: result.transitionEffect,
-          youtubeMetadata: result.youtubeMetadata
-        }
-      };
+        return {
+            intent: 'EDIT',
+            message: result.message,
+            data: {
+                description: result.editDescription,
+                filterStyle: result.filterStyle,
+                transitionEffect: result.transitionEffect
+            }
+        };
     }
 
-    return { type: 'NONE', data: null };
+    return { intent: result.intent, message: result.message, data: result.clip };
 
   } catch (error) {
     console.error("Error processing command:", error);
