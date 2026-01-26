@@ -13,11 +13,13 @@ const App: React.FC = () => {
   const [fileUri, setFileUri] = useState<string | null>(null);
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
+  const [hasPerformedFullAnalysis, setHasPerformedFullAnalysis] = useState(false);
   
   // Copilot / Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [isProcessingChat, setIsProcessingChat] = useState(false);
+  const [longProcessWarning, setLongProcessWarning] = useState(false);
 
   // Timeline / Reel State
   const [reel, setReel] = useState<Clip[]>([]);
@@ -33,6 +35,7 @@ const App: React.FC = () => {
   
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("Processing...");
+  const [videoDuration, setVideoDuration] = useState<number>(0);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -51,7 +54,7 @@ const App: React.FC = () => {
   // Scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory]);
+  }, [chatHistory, longProcessWarning]);
 
   // --- HANDLERS ---
 
@@ -75,13 +78,20 @@ const App: React.FC = () => {
     setAppState(AppState.READY);
     setErrorMsg(null);
     setAnalysisData(null);
+    setHasPerformedFullAnalysis(false);
+    resetChat();
+    setReel([]);
+    setVirtualEdit(null);
+  };
+
+  const resetChat = () => {
     setChatHistory([{
       id: 'welcome',
       role: 'assistant',
-      content: "Hi! I'm your Highlight Reel Copilot. Upload your video, and I'll help you find clips and build a montage. Try saying 'Find the funny parts' or 'Add the intro to my reel'.",
+      content: "Hi! I'm your Highlight Copilot. Upload your video, and I'll help you find the best moments. Try saying 'Find the funny parts' or 'Create a summary reel'.",
       timestamp: Date.now()
     }]);
-    setReel([]);
+    setChatInput('');
   };
 
   const ensureFileUploaded = async (currentFile: File): Promise<string> => {
@@ -95,12 +105,19 @@ const App: React.FC = () => {
   const handleAnalyze = async () => {
     if (!file) return;
     setErrorMsg(null);
-    setAnalysisData({ clips: [], overallSummary: '' });
+    
+    // Add a user-like message to chat to show action was taken
+    setChatHistory(prev => [...prev, {
+        id: `user-auto-${Date.now()}`,
+        role: 'user',
+        content: "Auto-find best moments",
+        timestamp: Date.now()
+    }]);
 
     try {
       const uri = await ensureFileUploaded(file);
       setAppState(AppState.ANALYZING);
-      setStatusMessage("Identifying viral clips...");
+      setStatusMessage("Finding best moments...");
       
       const data = await analyzeVideo(uri, file.type, (partialClips) => {
         setAnalysisData(prev => ({
@@ -110,17 +127,24 @@ const App: React.FC = () => {
       });
       
       setAnalysisData(data);
+      setHasPerformedFullAnalysis(true);
       setAppState(AppState.READY);
       setChatHistory(prev => [...prev, {
         id: `analysis-${Date.now()}`,
         role: 'assistant',
-        content: `I found ${data.clips.length} engaging clips! You can click them to play, or tell me "Add the first clip to the reel".`,
+        content: `I found ${data.clips.length} interesting clips! Click one to play, or click the download icon to save it.`,
         timestamp: Date.now()
       }]);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "Failed to analyze video.");
       setAppState(AppState.ERROR);
+      setChatHistory(prev => [...prev, {
+        id: `err-${Date.now()}`,
+        role: 'assistant',
+        content: "I ran into an error analyzing the video.",
+        timestamp: Date.now()
+      }]);
     }
   };
 
@@ -138,9 +162,16 @@ const App: React.FC = () => {
     setChatHistory(prev => [...prev, userMsg]);
     setChatInput('');
     setIsProcessingChat(true);
+    setLongProcessWarning(false);
+
+    // Warning Timer
+    const timer = setTimeout(() => {
+        setLongProcessWarning(true);
+    }, 8000);
 
     try {
       const uri = await ensureFileUploaded(file);
+      setAppState(AppState.READY); 
       
       const result = await processUserCommand(
         uri, 
@@ -159,20 +190,37 @@ const App: React.FC = () => {
 
       // EXECUTE INTENT
       if (result.intent === 'REEL_ADD' && result.data) {
-        const newClip = result.data as Clip;
-        setReel(prev => [...prev, newClip]);
-        // Also ensure it's in the main list if it's new
-        setAnalysisData(prev => {
-           if (!prev) return { overallSummary: '', clips: [newClip] };
-           // Avoid duplicates in main list by ID
-           if (prev.clips.some(c => c.id === newClip.id)) return prev;
-           return { ...prev, clips: [newClip, ...prev.clips] };
-        });
-        playClip(newClip);
+        // Handle both single clip and multi-clip additions
+        let clipsToAdd: Clip[] = [];
+        
+        if (result.data.clips && Array.isArray(result.data.clips) && result.data.clips.length > 0) {
+            clipsToAdd = result.data.clips.map((c: any) => ({
+                ...c,
+                id: c.id || `gen-${Date.now()}-${Math.random()}`,
+                category: c.category || 'Custom'
+            }));
+        } else if (result.data.startTime !== undefined) {
+            clipsToAdd = [result.data as Clip];
+        }
+
+        if (clipsToAdd.length > 0) {
+            setReel(prev => [...prev, ...clipsToAdd]);
+            
+            setAnalysisData(prev => {
+               const currentClips = prev?.clips || [];
+               const newUniqueClips = clipsToAdd.filter(
+                   nc => !currentClips.some(oc => oc.id === nc.id || (Math.abs(oc.startTime - nc.startTime) < 0.5 && Math.abs(oc.endTime - nc.endTime) < 0.5))
+               );
+               if (newUniqueClips.length === 0) return prev;
+               return { overallSummary: prev?.overallSummary || '', clips: [...newUniqueClips, ...currentClips] };
+            });
+
+            playClip(clipsToAdd[0]);
+        }
       } else if (result.intent === 'REEL_REMOVE') {
         const idx = result.data.index;
         setReel(prev => {
-           if (idx === -1) return prev.slice(0, -1); // Remove last
+           if (idx === -1) return prev.slice(0, -1); 
            if (idx !== undefined && idx >= 0 && idx < prev.length) {
               const newReel = [...prev];
               newReel.splice(idx, 1);
@@ -183,15 +231,19 @@ const App: React.FC = () => {
       } else if (result.intent === 'REEL_CLEAR') {
         setReel([]);
       } else if (result.intent === 'EDIT' && result.data) {
+        const duration = videoRef.current?.duration || 100;
+        const keeps = result.data.keepSegments || [{ start: 0, end: duration }];
+        
         setVirtualEdit({
           isActive: true,
           description: result.data.description,
-          keepSegments: [{ start: 0, end: videoRef.current?.duration || 0 }], // Global edit keeps whole video usually
+          keepSegments: keeps,
           filterStyle: result.data.filterStyle,
           transitionEffect: result.data.transitionEffect
         });
       } else if (result.intent === 'SEARCH' && result.data) {
-         playClip(result.data as Clip);
+         const clip = result.data as Clip;
+         playClip(clip);
       }
 
     } catch (err) {
@@ -199,11 +251,14 @@ const App: React.FC = () => {
       setChatHistory(prev => [...prev, {
         id: `err-${Date.now()}`,
         role: 'assistant',
-        content: "Sorry, I had trouble processing that request.",
+        content: "Sorry, I had trouble processing that request. Please try again.",
         timestamp: Date.now()
       }]);
     } finally {
+      clearTimeout(timer);
       setIsProcessingChat(false);
+      setLongProcessWarning(false);
+      if (appState === AppState.UPLOADING) setAppState(AppState.READY);
     }
   };
 
@@ -241,9 +296,8 @@ const App: React.FC = () => {
            videoRef.current.currentTime = reel[nextIndex].startTime;
            videoRef.current.play();
         } else {
-           // End of reel
            videoRef.current.pause();
-           setPlayerMode('FULL'); // Reset
+           setPlayerMode('FULL');
         }
       }
       return;
@@ -257,29 +311,61 @@ const App: React.FC = () => {
         videoRef.current.play();
       }
     }
-  }, [playerMode, reel, reelCurrentIndex, activeClipId, analysisData]);
+
+    // 3. VIRTUAL EDIT SKIP LOGIC (Remove Ums)
+    if (playerMode === 'FULL' && virtualEdit?.isActive && virtualEdit.keepSegments.length > 0) {
+      // Find if we are currently in a valid segment
+      const inValidSegment = virtualEdit.keepSegments.some(
+        seg => currentTime >= seg.start && currentTime < seg.end
+      );
+
+      if (!inValidSegment) {
+        // If not in valid segment, find the NEXT valid segment start
+        const nextSegment = virtualEdit.keepSegments.find(seg => seg.start > currentTime);
+        if (nextSegment) {
+          videoRef.current.currentTime = nextSegment.start;
+        } else {
+          // No more segments, stop
+          if (currentTime < videoRef.current.duration - 0.5) { // Prevent infinite loop at very end
+             videoRef.current.pause();
+             videoRef.current.currentTime = videoRef.current.duration;
+          }
+        }
+      }
+    }
+  }, [playerMode, reel, reelCurrentIndex, activeClipId, analysisData, virtualEdit]);
 
   const triggerTransition = () => {
     setIsTransitioning(true);
     setTimeout(() => setIsTransitioning(false), 500); 
   };
 
-  // --- EXPORT LOGIC ---
-  // (Reusing similar logic to Smart Edit but iterating Reel)
+  // --- EXPORT / DOWNLOAD LOGIC ---
+  
+  const handleDownloadClip = async (e: React.MouseEvent, clip: Clip) => {
+    e.stopPropagation();
+    if (!videoUrl || isExportingSmart || downloadingClipId) return;
+    
+    setDownloadingClipId(clip.id);
+    await processAndDownload([clip], `clip_${clip.title.replace(/\s+/g, '_')}.webm`);
+    setDownloadingClipId(null);
+  };
+
   const handleExportReel = async () => {
     if (reel.length === 0 || !videoUrl || isExportingSmart) return;
     setIsExportingSmart(true);
+    await processAndDownload(reel, `highlight_reel_${Date.now()}.webm`);
+    setIsExportingSmart(false);
+  };
 
+  const processAndDownload = async (clipsToProcess: Clip[], filename: string) => {
     const workerVideo = processingVideoRef.current;
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    if (!workerVideo || !ctx) {
-      setIsExportingSmart(false);
-      return;
-    }
+    if (!workerVideo || !ctx) return;
 
-    workerVideo.src = videoUrl;
+    workerVideo.src = videoUrl || '';
     await new Promise(r => workerVideo.onloadedmetadata = r);
     canvas.width = workerVideo.videoWidth;
     canvas.height = workerVideo.videoHeight;
@@ -294,7 +380,6 @@ const App: React.FC = () => {
     const chunks: BlobPart[] = [];
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
-    // Filters?
     let animationFrameId: number;
     const draw = () => {
       if (virtualEdit?.filterStyle) ctx.filter = virtualEdit.filterStyle;
@@ -302,45 +387,52 @@ const App: React.FC = () => {
       animationFrameId = requestAnimationFrame(draw);
     };
 
-    mediaRecorder.onstop = () => {
-      cancelAnimationFrame(animationFrameId);
-      audioCtx.close();
-      const blob = new Blob(chunks, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `highlight_reel_${Date.now()}.webm`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setIsExportingSmart(false);
-      workerVideo.pause();
-      workerVideo.src = "";
-    };
+    return new Promise<void>(async (resolve) => {
+      mediaRecorder.onstop = () => {
+        cancelAnimationFrame(animationFrameId);
+        audioCtx.close();
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        workerVideo.pause();
+        workerVideo.src = "";
+        resolve();
+      };
 
-    mediaRecorder.start();
-    draw();
+      mediaRecorder.start();
+      draw();
 
-    try {
-      for (const clip of reel) {
-        workerVideo.currentTime = clip.startTime;
-        await new Promise<void>(r => { const fn = () => { workerVideo.removeEventListener('seeked', fn); r(); }; workerVideo.addEventListener('seeked', fn); });
-        await workerVideo.play();
-        await new Promise<void>(r => {
-          const check = () => {
-            if (workerVideo.currentTime >= clip.endTime) { workerVideo.pause(); r(); }
-            else requestAnimationFrame(check);
-          };
-          check();
-        });
+      try {
+        for (const clip of clipsToProcess) {
+          workerVideo.currentTime = clip.startTime;
+          await new Promise<void>(r => { 
+             const fn = () => { workerVideo.removeEventListener('seeked', fn); r(); }; 
+             workerVideo.addEventListener('seeked', fn); 
+          });
+          
+          await workerVideo.play();
+          
+          await new Promise<void>(r => {
+            const check = () => {
+              if (workerVideo.currentTime >= clip.endTime) { workerVideo.pause(); r(); }
+              else requestAnimationFrame(check);
+            };
+            check();
+          });
+        }
+        mediaRecorder.stop();
+      } catch (e) {
+        console.error(e);
+        mediaRecorder.stop();
+        resolve();
       }
-      mediaRecorder.stop();
-    } catch (e) {
-      console.error(e);
-      mediaRecorder.stop();
-      setIsExportingSmart(false);
-    }
+    });
   };
 
   const reset = () => {
@@ -348,17 +440,23 @@ const App: React.FC = () => {
     setVideoUrl(null);
     setFileUri(null);
     setAnalysisData(null);
+    setHasPerformedFullAnalysis(false);
     setAppState(AppState.IDLE);
     setActiveClipId(null);
     setChatHistory([]);
     setReel([]);
     setPlayerMode('FULL');
+    setVirtualEdit(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const onLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    setVideoDuration(e.currentTarget.duration);
   };
 
   return (
     <div className="min-h-screen bg-[#0a0e1a] text-slate-50 flex flex-col relative overflow-hidden">
-      {/* Background (Same as before) */}
+      {/* Background */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-950/40 via-purple-950/40 to-pink-950/40" />
         <div className="absolute top-20 right-20 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px] animate-pulse" />
@@ -395,7 +493,7 @@ const App: React.FC = () => {
           {/* LEFT: Video Player & Upload */}
           <div className={`flex-1 flex flex-col p-6 overflow-y-auto ${!file ? 'items-center justify-center' : ''}`}>
              {!file ? (
-               // UPLOAD SCREEN (Refined)
+               // UPLOAD SCREEN
                <div className="w-full max-w-6xl mx-auto flex flex-col items-center justify-center py-8">
                  
                  {/* Hero Text */}
@@ -406,7 +504,7 @@ const App: React.FC = () => {
                      Watch it transform.
                    </h1>
                    <p className="text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
-                     Upload any long-form video. Chat with our AI Copilot to find viral moments, 
+                     Upload any long-form video. Chat with our AI Copilot to find the best moments, 
                      apply styles, and build highlight reels instantly. No editing skills required.
                    </p>
                  </div>
@@ -435,7 +533,7 @@ const App: React.FC = () => {
                           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                        </div>
                        <h3 className="text-lg font-bold text-white mb-2">Auto-Discovery</h3>
-                       <p className="text-slate-400 text-sm leading-relaxed">Instantly identifies viral-worthy moments, providing titles, virality scores, and reasoning.</p>
+                       <p className="text-slate-400 text-sm leading-relaxed">Instantly identifies best moments, providing titles, scores, and reasoning.</p>
                     </div>
                     <div className="bg-slate-800/40 p-6 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
                        <div className="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-purple-400">
@@ -464,9 +562,17 @@ const App: React.FC = () => {
                       className="w-full h-full object-contain" 
                       style={{ filter: virtualEdit?.filterStyle || 'none' }}
                       controls 
+                      onLoadedMetadata={onLoadedMetadata}
                       onTimeUpdate={handleTimeUpdate}
                     />
                     
+                    {/* Virtual Edit Active Indicator */}
+                    {virtualEdit?.isActive && (
+                      <div className="absolute top-4 right-4 bg-purple-600/90 text-white px-3 py-1 rounded-full text-xs font-bold border border-purple-400/50 animate-pulse shadow-lg backdrop-blur-md">
+                        {virtualEdit.keepSegments.length < 2 && virtualEdit.keepSegments[0]?.end === videoRef.current?.duration ? "FILTER ACTIVE" : "✂️ AUTO-EDIT ACTIVE"}
+                      </div>
+                    )}
+
                     {/* Transition Overlay */}
                     <div className={`absolute inset-0 bg-black pointer-events-none transition-opacity duration-300 ${isTransitioning ? 'opacity-100' : 'opacity-0'}`} />
 
@@ -485,21 +591,58 @@ const App: React.FC = () => {
                     )}
                  </div>
 
+                 {/* Segmentation Timeline Visualizer */}
+                 {virtualEdit?.isActive && videoDuration > 0 && (
+                     <div className="w-full h-8 bg-slate-900 mt-2 rounded flex relative overflow-hidden border border-slate-700">
+                        {/* Base Red Bar (Removed Parts) */}
+                        <div className="absolute inset-0 bg-red-900/30 flex items-center justify-center">
+                            <span className="text-[10px] text-red-200 uppercase tracking-widest font-bold opacity-50">Removed Parts</span>
+                        </div>
+                        {/* Green Bars (Kept Parts) */}
+                        {virtualEdit.keepSegments.map((seg, i) => (
+                             <div 
+                                key={i}
+                                className="absolute top-0 bottom-0 bg-green-500/80 hover:bg-green-400 transition-colors border-r border-green-300/20"
+                                style={{
+                                    left: `${(seg.start / videoDuration) * 100}%`,
+                                    width: `${((seg.end - seg.start) / videoDuration) * 100}%`
+                                }}
+                                title={`Keep: ${Math.round(seg.start)}s - ${Math.round(seg.end)}s`}
+                             />
+                        ))}
+                     </div>
+                 )}
+
                  {/* Available Clips (Mini Drawer) */}
                  {analysisData && (
                    <div className="mt-4 p-4 bg-slate-900/50 rounded-xl border border-slate-800">
                       <div className="flex items-center justify-between mb-2">
-                         <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Discovered Clips</h3>
-                         <span className="text-xs text-slate-500">{analysisData.clips.length} found</span>
+                         <div className="flex items-center gap-3">
+                            <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Discovered Moments</h3>
+                            <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">{analysisData.clips.length} found</span>
+                         </div>
                       </div>
                       <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
                          {analysisData.clips.map(clip => (
-                           <div key={clip.id} onClick={() => playClip(clip)} className="flex-none w-48 bg-slate-800 p-2 rounded-lg cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700">
+                           <div key={clip.id} onClick={() => playClip(clip)} className="group relative flex-none w-48 bg-slate-800 p-2 rounded-lg cursor-pointer hover:bg-slate-700 transition-colors border border-slate-700">
                               <p className="text-sm font-medium truncate">{clip.title}</p>
                               <div className="flex justify-between text-[10px] text-slate-400 mt-1">
                                 <span>{Math.round(clip.endTime - clip.startTime)}s</span>
-                                <span className="text-green-400">★ {clip.viralityScore}</span>
+                                <span className={clip.viralityScore >= 8 ? "text-green-400" : "text-blue-400"}>Score: {clip.viralityScore}</span>
                               </div>
+                              {/* Download Button on Clip */}
+                              <button 
+                                onClick={(e) => handleDownloadClip(e, clip)}
+                                disabled={downloadingClipId === clip.id}
+                                className={`absolute top-2 right-2 p-1.5 rounded-full bg-slate-900/80 hover:bg-blue-600 text-white shadow-md transition-all ${downloadingClipId === clip.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                title="Download this clip"
+                              >
+                                {downloadingClipId === clip.id ? (
+                                   <div className="w-3 h-3 border-2 border-white/50 border-t-white rounded-full animate-spin"></div>
+                                ) : (
+                                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                )}
+                              </button>
                            </div>
                          ))}
                       </div>
@@ -512,9 +655,20 @@ const App: React.FC = () => {
           {/* RIGHT: Chat Interface */}
           {file && (
             <div className="w-96 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-20">
-              <div className="p-4 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-10">
-                <h2 className="font-bold text-slate-200">Highlight Copilot</h2>
-                <p className="text-xs text-slate-500">Ask to find moments or build your reel.</p>
+              <div className="p-4 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-10 flex items-center justify-between">
+                <div>
+                   <h2 className="font-bold text-slate-200">Highlight Copilot</h2>
+                   <p className="text-xs text-slate-500">Ask to find moments or build your reel.</p>
+                </div>
+                <button 
+                   onClick={resetChat} 
+                   className="p-2 hover:bg-slate-800 rounded-lg text-slate-500 hover:text-white transition-colors"
+                   title="Reset Conversation"
+                >
+                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                   </svg>
+                </button>
               </div>
               
               <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
@@ -532,10 +686,16 @@ const App: React.FC = () => {
                 {isProcessingChat && (
                   <div className="flex justify-start">
                     <div className="bg-slate-800 rounded-2xl px-4 py-3 rounded-bl-none border border-slate-700">
-                      <div className="flex gap-1.5">
-                        <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                        <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
+                      <div className="flex flex-col gap-1.5">
+                         <div className="flex gap-1.5 items-center">
+                           <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"></div>
+                           <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                           <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></div>
+                           <span className="ml-2 text-xs text-slate-500">Thinking...</span>
+                         </div>
+                         {longProcessWarning && (
+                            <span className="text-[10px] text-blue-400 animate-pulse mt-1">Analyzing audio patterns...</span>
+                         )}
                       </div>
                     </div>
                   </div>
@@ -557,8 +717,13 @@ const App: React.FC = () => {
                   </button>
                 </form>
                 <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
+                   {/* Smart Action Chip */}
+                   <button onClick={handleAnalyze} disabled={hasPerformedFullAnalysis || appState === AppState.ANALYZING} className="whitespace-nowrap text-xs bg-blue-900/40 border border-blue-500/40 text-blue-300 px-3 py-1 rounded-full hover:bg-blue-800/60 hover:text-white transition-colors flex items-center gap-1">
+                      <span>✨ Auto-Find Clips</span>
+                   </button>
                    <button onClick={() => setChatInput("Add the funniest moment")} className="whitespace-nowrap text-xs bg-slate-800 px-2 py-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">"Add funny part"</button>
                    <button onClick={() => setChatInput("Create a summary reel")} className="whitespace-nowrap text-xs bg-slate-800 px-2 py-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">"Create summary"</button>
+                   <button onClick={() => setChatInput("Remove filler words")} className="whitespace-nowrap text-xs bg-slate-800 px-2 py-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">"Remove ums"</button>
                 </div>
               </div>
             </div>
@@ -584,7 +749,7 @@ const App: React.FC = () => {
                       ) : (
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                       )}
-                      Export
+                      Export Reel
                    </button>
                    <button onClick={() => setReel([])} className="text-slate-500 hover:text-red-400 p-1"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
                 </div>
