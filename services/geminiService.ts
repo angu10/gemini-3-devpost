@@ -36,6 +36,84 @@ const sanitizeClip = (clip: any): Clip => {
     };
 };
 
+// --- Helper: Robust JSON Parser ---
+const parseJSONSafely = (text: string): any => {
+    // 1. Try cleaning markdown code blocks
+    let cleanedText = text.trim();
+    if (cleanedText.startsWith('```')) {
+        cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
+    }
+    
+    // 2. Remove extremely long float precision (prevents some parser errors)
+    cleanedText = cleanedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
+
+    // 3. Extract JSON object if embedded in other text
+    const firstOpen = cleanedText.indexOf('{');
+    const lastClose = cleanedText.lastIndexOf('}');
+    
+    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+        cleanedText = cleanedText.substring(firstOpen, lastClose + 1);
+    } else if (firstOpen !== -1) {
+        // Truncated JSON case: starts with { but no closing } found
+        cleanedText = cleanedText.substring(firstOpen);
+    }
+
+    try {
+        return JSON.parse(cleanedText);
+    } catch (e) {
+        console.warn("Standard JSON parse failed, attempting auto-repair for truncated JSON...");
+        
+        // 4. Auto-repair truncated JSON
+        // This is a basic heuristic to close open strings and brackets/braces
+        let fixed = cleanedText.trim();
+        const stack: string[] = [];
+        let inString = false;
+        let isEscaped = false;
+
+        for (let i = 0; i < fixed.length; i++) {
+            const char = fixed[i];
+            
+            if (inString) {
+                if (char === '\\' && !isEscaped) {
+                    isEscaped = true;
+                } else if (char === '"' && !isEscaped) {
+                    inString = false;
+                } else {
+                    isEscaped = false;
+                }
+            } else {
+                if (char === '"') {
+                    inString = true;
+                } else if (char === '{' || char === '[') {
+                    stack.push(char);
+                } else if (char === '}') {
+                    if (stack[stack.length - 1] === '{') stack.pop();
+                } else if (char === ']') {
+                    if (stack[stack.length - 1] === '[') stack.pop();
+                }
+            }
+        }
+
+        // Close open string
+        if (inString) fixed += '"';
+
+        // Close open structures in reverse order
+        while (stack.length > 0) {
+            const open = stack.pop();
+            if (open === '{') fixed += '}';
+            if (open === '[') fixed += ']';
+        }
+
+        try {
+            return JSON.parse(fixed);
+        } catch (repairError) {
+            console.error("JSON Repair Failed:", repairError);
+            console.error("Original Text:", text.substring(0, 500) + "...");
+            throw new Error("Failed to parse response from Gemini.");
+        }
+    }
+};
+
 /**
  * Uploads a file to the Gemini File API and waits for it to be processed.
  */
@@ -125,22 +203,11 @@ export const analyzeVideo = async (
   const text = response.text;
   if (!text) throw new Error("No response from Gemini");
   
-  // Clean JSON before parsing
-  let fixedText = text.trim();
-  // Strip markdown code blocks
-  if (fixedText.startsWith('```')) {
-     fixedText = fixedText.replace(/^```(json)?|```$/g, '');
-  }
-  
-  // Truncate long floats for timestamps (e.g. 123.456789 -> 123.456)
-  fixedText = fixedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
-
   let result: AnalysisResponse;
   try {
-     result = JSON.parse(fixedText) as AnalysisResponse;
+     result = parseJSONSafely(text) as AnalysisResponse;
   } catch (e) {
-     console.error("JSON Parse Error (Analysis):", fixedText.substring(0, 500));
-     throw new Error("Failed to parse analysis results.");
+     throw e;
   }
 
   // Sanitize the output
@@ -182,6 +249,8 @@ export const processUserCommand = async (
     - SECOND: If NOT found, ANALYZE VIDEO FILE.
       - Create NEW Clip in 'data'.
       - **CRITICAL**: Accurate 'startTime' and 'endTime' (POSITIVE SECONDS).
+      - **CRITICAL**: Keep 'title' under 10 words.
+      - **CRITICAL**: Keep 'description' under 20 words.
   
   - REEL_ADD: User wants to create sequence/add clips.
     - If existingClips.length > 0 and user wants "all": return data: { all: true }.
@@ -276,25 +345,11 @@ export const processUserCommand = async (
   const text = response.text;
   if (!text) throw new Error("No response from Gemini");
 
-  let cleanedText = text.trim();
-  const firstOpen = text.indexOf('{');
-  const lastClose = text.lastIndexOf('}');
-  
-  if (firstOpen !== -1 && lastClose !== -1) {
-    cleanedText = text.substring(firstOpen, lastClose + 1);
-  } else if (cleanedText.startsWith('```')) {
-     cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
-  }
-  
-  // Clean potentially extremely long floats from timestamps
-  cleanedText = cleanedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
-
   let copilotResponse: CopilotResponse;
   
   try {
-    copilotResponse = JSON.parse(cleanedText) as CopilotResponse;
+    copilotResponse = parseJSONSafely(text) as CopilotResponse;
   } catch (e) {
-    console.error("JSON Parse Error on Gemini Response:", text.substring(0, 500));
     throw new Error("Failed to process AI response");
   }
 
