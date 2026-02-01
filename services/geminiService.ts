@@ -430,7 +430,9 @@ export const processUserCommand = async (
   - CLIP_EDIT: Modify the currently selected clip (Filters, Subtitles, Overlays). 
       - If user says "Translate", provide 'subtitles' field.
       - If user says "Add [thing]", provide 'overlay' field.
-      - If user says "Enhance" or "Make it [style]", provide 'filterStyle'.
+      - **CRITICAL**: If user says "Enhance", "Vintage", "Black and White" or "Make it [style]", you MUST provide valid CSS syntax for 'filterStyle'.
+        - Valid: "grayscale(1)", "sepia(0.8) contrast(1.2)", "saturate(2) brightness(1.1)", "blur(2px)".
+        - INVALID: "vintage", "black_and_white", "warm". Do NOT return these.
 
   OUTPUT format MUST be JSON matching the schema.
   `;
