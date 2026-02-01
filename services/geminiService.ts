@@ -407,7 +407,7 @@ export const processUserCommand = async (
 
   // Prepare Active Clip Context
   const activeClipContext = activeClip 
-    ? `\nCURRENTLY SELECTED CLIP: ${JSON.stringify(activeClip)}\nIf user says "this clip", "enhance", "translate" or "add", apply changes to THIS clip ID.`
+    ? `\nCURRENTLY SELECTED CLIP: ${JSON.stringify(activeClip)}\nIf user says "this clip", "enhance", "translate", "add" or "trim", apply changes to THIS clip ID.`
     : "";
 
   const systemPrompt = `
@@ -427,7 +427,8 @@ export const processUserCommand = async (
   - SEARCH: User wants to find a specific moment.
   - REEL_ADD / REEL_REMOVE / REEL_CLEAR: Manage the highlight reel.
   - EDIT: Global visual effect or auto-edit on the whole video.
-  - CLIP_EDIT: Modify the currently selected clip (Filters, Subtitles, Overlays). 
+  - CLIP_EDIT: Modify the currently selected clip. 
+      - **TIMESTAMPS**: If user asks to "trim", "cut", "shorten", "remove first 5s", or "extend", you MUST calculate the NEW startTime/endTime and return them.
       - If user says "Translate", provide 'subtitles' field.
       - If user says "Add [thing]", provide 'overlay' field.
       - **CRITICAL**: If user says "Enhance", "Vintage", "Black and White" or "Make it [style]", you MUST provide valid CSS syntax for 'filterStyle'.

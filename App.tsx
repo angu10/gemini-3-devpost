@@ -380,8 +380,43 @@ export const App: React.FC = () => {
       const aiMsg: ChatMessage = { id: `ai-${Date.now()}`, role: 'assistant', content: result.message, timestamp: Date.now() };
       setChatHistory(prev => [...prev, aiMsg]);
 
+      // --- HANDLE ACTIONS ---
+
       if (result.intent === 'CLIP_EDIT' && result.data && activeClipId) {
-         setClipEdits(prev => ({ ...prev, [activeClipId]: { id: activeClipId, filterStyle: result.data.filterStyle || prev[activeClipId]?.filterStyle, subtitles: result.data.subtitles || prev[activeClipId]?.subtitles, overlay: result.data.overlay || prev[activeClipId]?.overlay } }));
+         // 1. Handle Visual/Text Edits
+         setClipEdits(prev => ({ 
+             ...prev, 
+             [activeClipId]: { 
+                 id: activeClipId, 
+                 filterStyle: result.data.filterStyle || prev[activeClipId]?.filterStyle, 
+                 subtitles: result.data.subtitles || prev[activeClipId]?.subtitles, 
+                 overlay: result.data.overlay || prev[activeClipId]?.overlay 
+             } 
+         }));
+
+         // 2. Handle Timestamp Edits (Trimming/Extending)
+         if (result.data.startTime !== undefined || result.data.endTime !== undefined) {
+             setAnalysisData(prev => {
+                 if (!prev) return null;
+                 const updatedClips = prev.clips.map(c => {
+                     if (c.id === activeClipId) {
+                         return {
+                             ...c,
+                             startTime: result.data.startTime !== undefined ? result.data.startTime : c.startTime,
+                             endTime: result.data.endTime !== undefined ? result.data.endTime : c.endTime
+                         };
+                     }
+                     return c;
+                 });
+                 return { ...prev, clips: updatedClips };
+             });
+             
+             // Seek to new start time immediately to show user the change
+             if (result.data.startTime !== undefined && videoRef.current) {
+                 videoRef.current.currentTime = result.data.startTime;
+                 videoRef.current.play();
+             }
+         }
       }
       else if (result.intent === 'REEL_ADD' && result.data) {
         let clipsToAdd: Clip[] = [];
