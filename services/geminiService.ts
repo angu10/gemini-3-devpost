@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { SAMPLE_PROMPT } from '../constants';
-import { AnalysisResponse, Clip, CopilotResponse } from '../types';
+import { SAMPLE_PROMPT, MODELS } from '../constants';
+import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment } from '../types';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -17,6 +17,11 @@ const sanitizeClip = (clip: any): Clip => {
     // If end is missing, invalid, or less than start, give it a default duration (15s)
     if (!Number.isFinite(end) || end <= start) {
         end = start + 15;
+    }
+
+    // Constraint: Max 30 seconds
+    if (end - start > 30) {
+        end = start + 30;
     }
 
     // Ensure strings
@@ -38,84 +43,42 @@ const sanitizeClip = (clip: any): Clip => {
 
 // --- Helper: Robust JSON Parser ---
 const parseJSONSafely = (text: string): any => {
-    // 1. Try cleaning markdown code blocks
     let cleanedText = text.trim();
     if (cleanedText.startsWith('```')) {
         cleanedText = cleanedText.replace(/^```(json)?|```$/g, '');
     }
     
-    // 2. Remove extremely long float precision (prevents some parser errors)
+    // Remove extremely long float precision
     cleanedText = cleanedText.replace(/(\d+\.\d{3})\d{5,}/g, "$1");
 
-    // 3. Extract JSON object if embedded in other text
+    // Extract JSON object
     const firstOpen = cleanedText.indexOf('{');
     const lastClose = cleanedText.lastIndexOf('}');
-    
-    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+    const firstArray = cleanedText.indexOf('[');
+    const lastArray = cleanedText.lastIndexOf(']');
+
+    // Check if it's an array or object
+    if (firstArray !== -1 && lastArray !== -1 && (firstOpen === -1 || firstArray < firstOpen)) {
+         cleanedText = cleanedText.substring(firstArray, lastArray + 1);
+    } else if (firstOpen !== -1 && lastClose !== -1) {
         cleanedText = cleanedText.substring(firstOpen, lastClose + 1);
-    } else if (firstOpen !== -1) {
-        // Truncated JSON case: starts with { but no closing } found
-        cleanedText = cleanedText.substring(firstOpen);
     }
 
     try {
         return JSON.parse(cleanedText);
     } catch (e) {
-        console.warn("Standard JSON parse failed, attempting auto-repair for truncated JSON...");
-        
-        // 4. Auto-repair truncated JSON
-        // This is a basic heuristic to close open strings and brackets/braces
-        let fixed = cleanedText.trim();
-        const stack: string[] = [];
-        let inString = false;
-        let isEscaped = false;
-
-        for (let i = 0; i < fixed.length; i++) {
-            const char = fixed[i];
-            
-            if (inString) {
-                if (char === '\\' && !isEscaped) {
-                    isEscaped = true;
-                } else if (char === '"' && !isEscaped) {
-                    inString = false;
-                } else {
-                    isEscaped = false;
-                }
-            } else {
-                if (char === '"') {
-                    inString = true;
-                } else if (char === '{' || char === '[') {
-                    stack.push(char);
-                } else if (char === '}') {
-                    if (stack[stack.length - 1] === '{') stack.pop();
-                } else if (char === ']') {
-                    if (stack[stack.length - 1] === '[') stack.pop();
-                }
-            }
-        }
-
-        // Close open string
-        if (inString) fixed += '"';
-
-        // Close open structures in reverse order
-        while (stack.length > 0) {
-            const open = stack.pop();
-            if (open === '{') fixed += '}';
-            if (open === '[') fixed += ']';
-        }
-
+        console.warn("JSON Parse failed, attempting cleanup...");
         try {
-            return JSON.parse(fixed);
-        } catch (repairError) {
-            console.error("JSON Repair Failed:", repairError);
-            console.error("Original Text:", text.substring(0, 500) + "...");
-            throw new Error("Failed to parse response from Gemini.");
+            // Very basic cleanup for trailing commas
+            return JSON.parse(cleanedText.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']'));
+        } catch (e2) {
+             throw new Error("Failed to parse Gemini response");
         }
     }
 };
 
 /**
- * Uploads a file to the Gemini File API and waits for it to be processed.
+ * Uploads a file to the Gemini File API.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
   if (onProgress) onProgress("Uploading video to Gemini...");
@@ -130,11 +93,11 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
   if (onProgress) onProgress("Processing video...");
   
   let attempts = 0;
-  const maxAttempts = 60; // 2 minutes max waiting (2s interval)
+  const maxAttempts = 60; // 2 minutes
 
   while (fileInfo.state === 'PROCESSING') {
     if (attempts >= maxAttempts) {
-        throw new Error("Video processing timed out. Please try a smaller file or try again later.");
+        throw new Error("Video processing timed out.");
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
     fileInfo = await ai.files.get({ name: uploadResult.name });
@@ -150,15 +113,70 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
 };
 
 /**
- * Analyzes the video to find viral clips.
+ * PASS 1: Extract Transcript (Cheap/Fast using Flash)
+ */
+export const extractTranscript = async (
+    fileUri: string,
+    mimeType: string
+): Promise<TranscriptSegment[]> => {
+    console.log("🎙️ Pass 1: Extracting Transcript...");
+    
+    const transcriptSchema = {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                start: { type: Type.NUMBER },
+                end: { type: Type.NUMBER },
+                text: { type: Type.STRING },
+                speaker: { type: Type.STRING }
+            },
+            required: ['start', 'text']
+        }
+    };
+
+    const response = await ai.models.generateContent({
+        model: MODELS.FLASH, // Use Flash for speed/cost
+        contents: [
+            {
+                role: 'user',
+                parts: [
+                    { fileData: { fileUri: fileUri, mimeType: mimeType } },
+                    { text: "Generate a detailed timestamped transcript of this video. Group sentences meaningfully." },
+                ],
+            },
+        ],
+        config: {
+            responseMimeType: 'application/json',
+            responseSchema: transcriptSchema,
+        },
+    });
+
+    const text = response.text;
+    if (!text) return [];
+
+    try {
+        return parseJSONSafely(text) as TranscriptSegment[];
+    } catch (e) {
+        console.warn("Failed to parse transcript", e);
+        return [];
+    }
+};
+
+/**
+ * PASS 2: Analyze Visuals (Expensive/Smart using Pro)
  */
 export const analyzeVideo = async (
   fileUri: string, 
   mimeType: string,
   modelName: string,
   onPartial?: (clips: Clip[]) => void
-): Promise<AnalysisResponse> => {
-  // Schema definition for the analysis response
+): Promise<{ analysis: AnalysisResponse, transcript: TranscriptSegment[] }> => {
+  
+  // 1. Parallel Execution: Start Transcript extraction (Pass 1)
+  const transcriptPromise = extractTranscript(fileUri, mimeType);
+
+  // 2. Main Execution: Viral Clip Analysis (Pass 2)
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
@@ -183,7 +201,7 @@ export const analyzeVideo = async (
     required: ['overallSummary', 'clips'],
   };
 
-  const response = await ai.models.generateContent({
+  const analysisPromise = ai.models.generateContent({
     model: modelName,
     contents: [
       {
@@ -200,7 +218,10 @@ export const analyzeVideo = async (
     },
   });
 
-  const text = response.text;
+  // Wait for both
+  const [transcript, analysisResponse] = await Promise.all([transcriptPromise, analysisPromise]);
+
+  const text = analysisResponse.text;
   if (!text) throw new Error("No response from Gemini");
   
   let result: AnalysisResponse;
@@ -217,7 +238,7 @@ export const analyzeVideo = async (
       result.clips = [];
   }
 
-  return result;
+  return { analysis: result, transcript };
 };
 
 /**
@@ -228,41 +249,43 @@ export const processUserCommand = async (
   mimeType: string,
   userMessage: string,
   existingClips: Clip[],
-  modelName: string
+  modelName: string,
+  transcript?: TranscriptSegment[], // Optional transcript for context
+  activeClip?: Clip | null // NEW: The currently selected clip
 ): Promise<CopilotResponse> => {
 
+  // Prepare Transcript Context if available (First 5000 chars to save context)
+  const transcriptContext = transcript 
+    ? `\nTRANSCRIPT CONTEXT:\n${JSON.stringify(transcript.slice(0, 20))}\n...(truncated)`
+    : "";
+
+  // Prepare Active Clip Context
+  const activeClipContext = activeClip 
+    ? `\nCURRENTLY SELECTED CLIP: ${JSON.stringify(activeClip)}\nIf user says "this clip", "enhance", "translate" or "add", apply changes to THIS clip ID.`
+    : "";
+
   const systemPrompt = `
-  You are a video editing assistant (Highlight Reel Copilot). 
-  Your goal is to interpret the user's request and map it to an action (intent).
+  You are 'Director AI' - A professional Video Editor and Creative Director.
+  Your goal is to interpret the user's request and act with EDITORIAL JUDGMENT.
   
   AVAILABLE CLIPS: ${existingClips.length} clips found.
-  Top clips: ${existingClips.slice(0, 3).map(c => c.title).join(', ')}
+  ${transcriptContext}
+  ${activeClipContext}
 
-  SPEED PRIORITY:
-  - For SEARCH: Return result in <5 seconds.
-  - If query matches existing clip titles, use context immediately.
-  - Only deep-analyze video if no context match.
+  DIRECTOR GUIDELINES:
+  1. **Be Precise**: When finding a clip, ensure the 'startTime' is EXACTLY when the action/speech starts.
+  2. **Be Creative**: For 'CLIP_EDIT' intents, generate CSS filters or text overlays that match the mood.
+  3. **Context Matters**: If a clip is selected, prioritize editing THAT clip over searching for new ones.
 
   INTENTS:
-  - SEARCH: User wants to find a specific moment or topic.
-    - FIRST: Check 'AVAILABLE CLIPS' titles. If match, return that existing clip.
-    - SECOND: If NOT found, ANALYZE VIDEO FILE.
-      - Create NEW Clip in 'data'.
-      - **CRITICAL**: Accurate 'startTime' and 'endTime' (POSITIVE SECONDS).
-      - **CRITICAL**: Keep 'title' under 10 words.
-      - **CRITICAL**: Keep 'description' under 20 words.
-  
-  - REEL_ADD: User wants to create sequence/add clips.
-    - If existingClips.length > 0 and user wants "all": return data: { all: true }.
-    - Otherwise: Analyze video, return data: { clips: [ ...new... ] }.
-  
-  - REEL_REMOVE: Remove clip.
-  - REEL_CLEAR: Clear reel.
-  
-  - EDIT: Visual effect OR remove audio fillers.
-    - "remove ums": Analyze audio, return 'keepSegments' (parts WITH speech).
-    - Visual filter: Set filterStyle.
-  
+  - SEARCH: User wants to find a specific moment.
+  - REEL_ADD / REEL_REMOVE / REEL_CLEAR: Manage the highlight reel.
+  - EDIT: Global visual effect or auto-edit on the whole video.
+  - CLIP_EDIT: Modify the currently selected clip (Filters, Subtitles, Overlays). 
+      - If user says "Translate", provide 'subtitles' field.
+      - If user says "Add [thing]", provide 'overlay' field.
+      - If user says "Enhance" or "Make it [style]", provide 'filterStyle'.
+
   OUTPUT format MUST be JSON matching the schema.
   `;
 
@@ -270,7 +293,7 @@ export const processUserCommand = async (
   const responseSchema = {
     type: Type.OBJECT,
     properties: {
-      intent: { type: Type.STRING, enum: ['SEARCH', 'EDIT', 'REEL_ADD', 'REEL_REMOVE', 'REEL_CLEAR', 'UNKNOWN'] },
+      intent: { type: Type.STRING, enum: ['SEARCH', 'EDIT', 'REEL_ADD', 'REEL_REMOVE', 'REEL_CLEAR', 'CLIP_EDIT', 'UNKNOWN'] },
       message: { type: Type.STRING },
       data: { 
         type: Type.OBJECT,
@@ -283,6 +306,16 @@ export const processUserCommand = async (
             endTime: { type: Type.NUMBER, nullable: true },
             description: { type: Type.STRING, nullable: true },
             filterStyle: { type: Type.STRING, nullable: true },
+            subtitles: { type: Type.STRING, nullable: true },
+            overlay: {
+                type: Type.OBJECT,
+                nullable: true,
+                properties: {
+                    type: { type: Type.STRING, enum: ['TEXT', 'EMOJI', 'IMAGE'] },
+                    content: { type: Type.STRING },
+                    position: { type: Type.STRING, enum: ['TOP', 'BOTTOM', 'CENTER', 'TOP_RIGHT', 'TOP_LEFT'] }
+                }
+            },
             index: { type: Type.NUMBER, nullable: true },
             tags: { type: Type.ARRAY, items: { type: Type.STRING }, nullable: true },
             keepSegments: { 
@@ -323,7 +356,6 @@ export const processUserCommand = async (
     responseSchema: responseSchema,
   };
 
-  // Only use thinking budget for Pro models
   if (modelName.toLowerCase().includes('pro')) {
      config.thinkingConfig = { thinkingBudget: 2048 };
   }
@@ -353,7 +385,7 @@ export const processUserCommand = async (
     throw new Error("Failed to process AI response");
   }
 
-  // --- Sanitize Copilot Data ---
+  // Sanitize
   if (copilotResponse.data) {
       if (Array.isArray(copilotResponse.data.clips)) {
           copilotResponse.data.clips = copilotResponse.data.clips.map(sanitizeClip);
