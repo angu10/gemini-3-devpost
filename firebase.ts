@@ -2,31 +2,46 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-// TODO: REPLACE WITH YOUR FIREBASE CONFIG FROM CONSOLE
-// If these are missing, the app will gracefully fallback to "No Database" mode.
+// ============================================================================
+// 1. SETUP INSTRUCTIONS
+// ============================================================================
+// To enable persistence (saving analysis results):
+// 1. Go to https://console.firebase.google.com/
+// 2. Select your project > Project Settings (gear icon) > General.
+// 3. Scroll down to "Your apps" > "SDK setup and configuration" > "Config".
+// 4. Copy the values (apiKey, authDomain, etc.) and PASTE them below.
+// 5. IMPORTANT: Go to "Build" > "Firestore Database" > "Rules" tab.
+//    Change the rules to: 
+//    allow read, write: if true; 
+//    (This is for development/hackathons only).
+
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.REACT_APP_FIREBASE_APP_ID
+  // REPLACE THE STRINGS BELOW WITH YOUR FIREBASE KEYS
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || "PASTE_YOUR_API_KEY_HERE",
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "PASTE_YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || "PASTE_YOUR_PROJECT_ID",
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "PASTE_YOUR_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "PASTE_YOUR_SENDER_ID",
+  appId: process.env.REACT_APP_FIREBASE_APP_ID || "PASTE_YOUR_APP_ID"
 };
 
-// Initialize Firebase only if config is present
+// Initialize Firebase only if config is valid
 let db: any = null;
 
-try {
-  // Simple check to see if config is populated
-  if (firebaseConfig.apiKey) {
+const isConfigured = firebaseConfig.apiKey && 
+                     firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY_HERE" &&
+                     !firebaseConfig.apiKey.includes("PASTE_");
+
+if (isConfigured) {
+  try {
       const app = initializeApp(firebaseConfig);
       db = getFirestore(app);
-      console.log("🔥 Firebase initialized successfully");
-  } else {
-      console.info("ℹ️ App running in Stateless Mode (Firebase keys not detected). Data will not persist after refresh.");
+      console.log("🔥 Firebase initialized successfully. Persistence is ACTIVE.");
+  } catch (e) {
+      console.error("Firebase initialization failed:", e);
   }
-} catch (e) {
-  console.error("Firebase initialization failed:", e);
+} else {
+  console.info("ℹ️ Firebase config missing or default. App running in Stateless/Local Mode.");
 }
 
 export { db };

@@ -5,6 +5,7 @@ import { MAX_FILE_SIZE_MB, MODELS, DEFAULT_MODEL } from './constants';
 import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages, generateTTS } from './services/geminiService';
 import { getCachedAnalysis, saveAnalysisToCache } from './services/dbService';
 import { Button } from './components/Button';
+import { db } from './firebase';
 
 // --- Helper: Decode Raw PCM from Gemini ---
 const decodePCM = (
@@ -702,7 +703,18 @@ export const App: React.FC = () => {
                         AI Slideshow
                         </button>
                     </div>
-                    {loadedFromCache && <span className="text-xs text-green-400 bg-green-900/30 px-2 py-1 rounded border border-green-800">⚡ Loaded</span>}
+                    {db ? (
+                        <span className="text-xs text-green-400 flex items-center gap-1 border border-green-900/50 bg-green-900/10 px-2 py-0.5 rounded">
+                            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-green-500/50 shadow-sm"></span>
+                            Cloud Sync
+                        </span>
+                    ) : (
+                         <span className="text-xs text-slate-500 flex items-center gap-1 border border-slate-800 bg-slate-900/50 px-2 py-0.5 rounded" title="Configure firebase.ts to enable persistence">
+                            <span className="w-1.5 h-1.5 bg-slate-600 rounded-full"></span>
+                            Local Mode
+                        </span>
+                    )}
+                    {loadedFromCache && <span className="text-xs text-blue-400 bg-blue-900/30 px-2 py-1 rounded border border-blue-800">⚡ Cached</span>}
                     {(file || imageFiles.length > 0) && <Button variant="secondary" onClick={reset} className="text-sm py-1">New Project</Button>}
                 </div>
             )}
