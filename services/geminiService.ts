@@ -1,10 +1,28 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
-import { SAMPLE_PROMPT, MODELS } from '../constants';
-import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment } from '../types';
+import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { SAMPLE_PROMPT, STORY_PROMPT, MODELS } from '../constants';
+import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment, TimeRange, StoryResponse } from '../types';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+// --- Helper: File to Base64 Part ---
+const fileToPart = async (file: File): Promise<any> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+             const base64String = (reader.result as string).split(',')[1];
+             resolve({
+                 inlineData: {
+                     data: base64String,
+                     mimeType: file.type
+                 }
+             });
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+};
 
 // --- Helper: Sanitize Clip Data ---
 const sanitizeClip = (clip: any): Clip => {
@@ -77,6 +95,52 @@ const parseJSONSafely = (text: string): any => {
     }
 };
 
+// --- Helper: Client-Side Smart Edit (Silence/Filler Removal) ---
+const FILLER_WORDS = new Set(['um', 'uh', 'ah', 'umm', 'uhh', 'hmm', 'er', 'like', 'you know', 'basically', 'literally']);
+
+const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
+    // 1. Filter valid segments (remove segments that are just filler words)
+    const validSegments = transcript.filter(seg => {
+        if (!seg.text) return false;
+        const cleanText = seg.text.toLowerCase().replace(/[^a-z\s]/g, '').trim();
+        // Keep segment if it's not empty and not JUST a filler word
+        if (!cleanText) return false;
+        if (FILLER_WORDS.has(cleanText)) return false;
+        return true;
+    });
+
+    if (validSegments.length === 0) return [{ start: 0, end: 10 }]; // Fallback if everything is filtered
+
+    // 2. Construct Keep Segments with Padding & Merge logic
+    // We assume gaps between transcript segments > GAP_THRESHOLD are "silence"
+    const merged: TimeRange[] = [];
+    const GAP_THRESHOLD = 0.5; // If gap is less than 0.5s, merge them (don't cut)
+    const PADDING = 0.1; // Keep 0.1s audio around the speech to sound natural
+
+    let current = {
+        start: Math.max(0, validSegments[0].start - PADDING),
+        end: validSegments[0].end + PADDING
+    };
+
+    for (let i = 1; i < validSegments.length; i++) {
+        const seg = validSegments[i];
+        const nextStart = Math.max(0, seg.start - PADDING);
+        const nextEnd = seg.end + PADDING;
+
+        if (nextStart <= current.end + GAP_THRESHOLD) {
+            // Overlapping or close enough: Merge
+            current.end = Math.max(current.end, nextEnd);
+        } else {
+            // Significant gap: Push current and start new
+            merged.push(current);
+            current = { start: nextStart, end: nextEnd };
+        }
+    }
+    merged.push(current);
+
+    return merged;
+};
+
 /**
  * Uploads a file to the Gemini File API.
  */
@@ -111,6 +175,64 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
   if (onProgress) onProgress("Ready for analysis.");
   return fileInfo.uri;
 };
+
+/**
+ * IMAGE STORY MODE: Generate Script & Order
+ */
+export const generateStoryFromImages = async (files: File[]): Promise<StoryResponse> => {
+    // Convert files to inline data (multimodal input)
+    const imageParts = await Promise.all(files.map(f => fileToPart(f)));
+    
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            script: { type: Type.STRING },
+            imageOrder: { type: Type.ARRAY, items: { type: Type.NUMBER } },
+            title: { type: Type.STRING }
+        },
+        required: ['script', 'imageOrder', 'title']
+    };
+
+    const response = await ai.models.generateContent({
+        model: MODELS.FLASH, // Use Flash for multimodal analysis
+        contents: [{
+            role: 'user',
+            parts: [...imageParts, { text: STORY_PROMPT }]
+        }],
+        config: {
+            responseMimeType: 'application/json',
+            responseSchema: responseSchema
+        }
+    });
+
+    const text = response.text;
+    if(!text) throw new Error("Failed to generate story script");
+
+    return parseJSONSafely(text) as StoryResponse;
+};
+
+/**
+ * IMAGE STORY MODE: Generate TTS Audio
+ */
+export const generateTTS = async (text: string): Promise<string> => {
+    const response = await ai.models.generateContent({
+        model: MODELS.TTS,
+        contents: [{ parts: [{ text: text }] }],
+        config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+                voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: 'Kore' },
+                },
+            },
+        },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!base64Audio) throw new Error("No audio generated");
+    return base64Audio;
+};
+
 
 /**
  * PASS 1: Extract Transcript (Cheap/Fast using Flash)
@@ -253,6 +375,25 @@ export const processUserCommand = async (
   transcript?: TranscriptSegment[], // Optional transcript for context
   activeClip?: Clip | null // NEW: The currently selected clip
 ): Promise<CopilotResponse> => {
+
+  // --- 0. INTERCEPT: Fast Silence/Filler Removal ---
+  const lowerMsg = userMessage.toLowerCase();
+  const isSilenceRemoval = lowerMsg.includes('silence') || lowerMsg.includes('filler') || lowerMsg.includes('remove gaps');
+
+  if (isSilenceRemoval && transcript && transcript.length > 0) {
+      console.log("⚡ Executing Fast Client-Side Silence Removal");
+      const keepSegments = performSmartEdit(transcript);
+      return {
+          intent: 'EDIT',
+          message: "I've analyzed the transcript and removed silence and filler words instantly. Here is the tightened video.",
+          data: { 
+              keepSegments,
+              description: "Auto-Removed Silence & Fillers"
+          }
+      };
+  }
+
+  // --- 1. Regular AI Processing ---
 
   // Prepare Transcript Context if available (First 5000 chars to save context)
   const transcriptContext = transcript 

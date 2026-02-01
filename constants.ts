@@ -2,7 +2,8 @@
 // Models
 export const MODELS = {
   FLASH: 'gemini-3-flash-preview',
-  PRO: 'gemini-3-pro-preview'
+  PRO: 'gemini-3-pro-preview',
+  TTS: 'gemini-2.5-flash-preview-tts'
 };
 
 export const DEFAULT_MODEL = MODELS.FLASH;
@@ -33,4 +34,21 @@ REQUIREMENTS:
 - **Duration**: 15-30 seconds STRICTLY.
 - **Titles**: CLICKBAIT STYLE (Under 10 words). Make me want to watch. (e.g. "The moment he realized..." instead of "Speaker discusses realization").
 - **Tags**: 3-5 high-volume SEO hashtags.
+`;
+
+export const STORY_PROMPT = `
+You are a Documentary Director. I will provide a set of images.
+1. Analyze the visual story.
+2. Order the images to create the best narrative flow.
+3. Write a short, engaging voiceover script (max 30 seconds) that narrates the story shown in the photos. 
+   - The script should be emotional, exciting, or funny depending on the images.
+   - Do NOT include "Image 1:" prefixes in the script. Just the spoken text.
+4. Give it a catchy title.
+
+Return JSON:
+{
+  "script": "string",
+  "imageOrder": [original_index_numbers],
+  "title": "string"
+}
 `;

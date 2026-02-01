@@ -32,8 +32,11 @@ export enum AppState {
   UPLOADING = 'UPLOADING',
   ANALYZING = 'ANALYZING',
   READY = 'READY',
-  ERROR = 'ERROR'
+  ERROR = 'ERROR',
+  CREATING_STORY = 'CREATING_STORY' // New state
 }
+
+export type AppMode = 'LANDING' | 'VIDEO_ANALYSIS' | 'IMAGE_STORY';
 
 export interface AnalysisResponse {
   clips: Clip[];
@@ -93,4 +96,10 @@ export interface CopilotResponse {
   intent: 'SEARCH' | 'EDIT' | 'REEL_ADD' | 'REEL_REMOVE' | 'REEL_CLEAR' | 'CLIP_EDIT' | 'UNKNOWN';
   message: string;
   data?: any;
+}
+
+export interface StoryResponse {
+    script: string;
+    imageOrder: number[];
+    title: string;
 }
