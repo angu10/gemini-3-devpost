@@ -179,10 +179,15 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
 /**
  * IMAGE STORY MODE: Generate Script & Order
  */
-export const generateStoryFromImages = async (files: File[]): Promise<StoryResponse> => {
+export const generateStoryFromImages = async (files: File[], context?: string): Promise<StoryResponse> => {
     // Convert files to inline data (multimodal input)
     const imageParts = await Promise.all(files.map(f => fileToPart(f)));
     
+    let prompt = STORY_PROMPT;
+    if (context && context.trim()) {
+        prompt += `\n\nUSER PROVIDED CONTEXT / BACKSTORY:\n"${context}"\n\nUse this context to guide the narrative script and tone.`;
+    }
+
     const responseSchema = {
         type: Type.OBJECT,
         properties: {
@@ -197,7 +202,7 @@ export const generateStoryFromImages = async (files: File[]): Promise<StoryRespo
         model: MODELS.FLASH, // Use Flash for multimodal analysis
         contents: [{
             role: 'user',
-            parts: [...imageParts, { text: STORY_PROMPT }]
+            parts: [...imageParts, { text: prompt }]
         }],
         config: {
             responseMimeType: 'application/json',

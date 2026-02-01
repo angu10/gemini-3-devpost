@@ -6,6 +6,22 @@ import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages,
 import { getCachedAnalysis, saveAnalysisToCache } from './services/dbService';
 import { Button } from './components/Button';
 
+// --- Helper: Decode Raw PCM from Gemini ---
+const decodePCM = (
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number = 24000 // Gemini TTS standard
+): AudioBuffer => {
+  const pcm16 = new Int16Array(data.buffer);
+  const buffer = ctx.createBuffer(1, pcm16.length, sampleRate);
+  const channelData = buffer.getChannelData(0);
+  
+  for (let i = 0; i < pcm16.length; i++) {
+    channelData[i] = pcm16[i] / 32768.0;
+  }
+  return buffer;
+};
+
 export const App: React.FC = () => {
   // --- STATE ---
   const [appMode, setAppMode] = useState<AppMode>('LANDING');
@@ -21,6 +37,7 @@ export const App: React.FC = () => {
   // Image Story State
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [storyLoadingStep, setStoryLoadingStep] = useState<string>('');
+  const [storyContext, setStoryContext] = useState('');
 
   // Model Selection
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
@@ -141,7 +158,7 @@ export const App: React.FC = () => {
     try {
         // 1. Generate Script & Order
         setStoryLoadingStep("AI is directing the story...");
-        const storyData = await generateStoryFromImages(imageFiles);
+        const storyData = await generateStoryFromImages(imageFiles, storyContext);
         
         // 2. Generate Voiceover
         setStoryLoadingStep("AI is recording voiceover...");
@@ -168,13 +185,14 @@ export const App: React.FC = () => {
       canvas.width = 1080; // Shorts/Reels Resolution
       canvas.height = 1920; 
 
-      // Decode Audio
+      // Decode Audio (Raw PCM to Buffer)
       const audioCtx = new AudioContext();
       const binaryString = atob(audioBase64);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
-      const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+      
+      const audioBuffer = decodePCM(bytes, audioCtx, 24000);
 
       // Setup Images
       const orderedImages: HTMLImageElement[] = [];
@@ -644,6 +662,7 @@ export const App: React.FC = () => {
     setActiveClipId(null); setChatHistory([]); setReel([]); setPlayerMode('FULL'); setVirtualEdit(null); setClipEdits({});
     if (fileInputRef.current) fileInputRef.current.value = '';
     setImageFiles([]); // Reset images
+    setStoryContext('');
   };
 
   const onLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => setVideoDuration(e.currentTarget.duration);
@@ -759,6 +778,20 @@ export const App: React.FC = () => {
                                          <span className="text-2xl">+</span>
                                      </div>
                                  </div>
+                                 
+                                 {/* NEW CONTEXT INPUT */}
+                                 <div className="mb-8 max-w-2xl mx-auto w-full">
+                                     <label className="block text-sm font-medium text-slate-400 mb-2">
+                                         Story Context (Optional)
+                                     </label>
+                                     <textarea
+                                         value={storyContext}
+                                         onChange={(e) => setStoryContext(e.target.value)}
+                                         placeholder="e.g., This was our trip to Japan in 2023. We got lost in Tokyo but found amazing sushi. The tone should be nostalgic and fun."
+                                         className="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-slate-200 focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 transition-all placeholder:text-slate-600 h-24 resize-none"
+                                     />
+                                 </div>
+
                                  <div className="flex justify-center">
                                     <Button onClick={handleCreateStory} className="px-8 py-4 text-lg bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 shadow-lg shadow-pink-500/30">
                                         🎬 Create AI Story Video
@@ -910,7 +943,22 @@ export const App: React.FC = () => {
                   <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Type a command..." className="w-full bg-slate-950 border border-slate-700 rounded-full pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-blue-500 transition-colors focus:bg-slate-900"/>
                   <button type="submit" disabled={!chatInput.trim() || isProcessingChat} className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-full hover:bg-blue-500 disabled:opacity-50"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" /></svg></button>
                 </form>
-                {/* Persistent Quick Action Chips (Omitted for brevity, same as previous) */}
+                <div className="flex gap-2 mt-3 overflow-x-auto pb-1 custom-scrollbar">
+                  {activeClipId ? (
+                    <>
+                      <button onClick={() => handleSendMessage(null, "Add English subtitles")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">📝 Subtitles</button>
+                      <button onClick={() => handleSendMessage(null, "Make it look vintage")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">🎞️ Vintage Filter</button>
+                      <button onClick={() => handleSendMessage(null, "Add a 🔥 emoji in the corner")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">🔥 Add Emoji</button>
+                      <button onClick={() => handleSendMessage(null, "Translate to Spanish")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">🇪🇸 Translate</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => handleSendMessage(null, "Find funny moments")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">😂 Funny</button>
+                      <button onClick={() => handleSendMessage(null, "Create a 30s summary reel")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">🎬 Summary Reel</button>
+                      <button onClick={() => handleSendMessage(null, "Find actionable advice")} className="whitespace-nowrap px-3 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-full text-xs text-slate-300 transition-colors">💡 Insights</button>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           )}
