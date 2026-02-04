@@ -4,9 +4,8 @@ import { SAMPLE_PROMPT, STORY_PROMPT, MODELS } from '../constants';
 import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment, TimeRange, StoryResponse } from '../types';
 
 // Initialize Gemini Client
-// Fixed: Safely check if process is defined (Node) before accessing it, otherwise use import.meta.env (Vite)
-const apiKey = (typeof process !== "undefined" ? process.env.API_KEY : undefined) || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
-const ai = new GoogleGenAI({ apiKey: apiKey }); 
+// Guideline: The API key must be obtained exclusively from the environment variable process.env.API_KEY.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY }); 
 
 // Common Safety Settings to prevent "No response" on valid video content
 const SAFETY_SETTINGS = [
@@ -20,10 +19,10 @@ const SAFETY_SETTINGS = [
  * Validates the Gemini API connection by making a lightweight model call.
  */
 export const validateGeminiConnection = async (): Promise<{ success: boolean; message: string }> => {
-    if (!apiKey) {
+    if (!process.env.API_KEY) {
         return { success: false, message: "Missing API Key" };
     }
-    if (apiKey.startsWith("project-")) {
+    if (process.env.API_KEY.startsWith("project-")) {
          return { success: false, message: "Invalid Key Format (Looks like Project ID)" };
     }
     try {
