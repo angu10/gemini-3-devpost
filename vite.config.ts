@@ -15,18 +15,18 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      host: true, // Listen on 0.0.0.0 (Required for Cloud Run/Docker)
+      // Use string '0.0.0.0' for maximum compatibility
+      host: '0.0.0.0', 
       port: port,
-      strictPort: true, // Fail if port is busy
-      allowedHosts: true, // Allow cloud-run domain names
+      strictPort: true,
       cors: true,
     },
     preview: {
-      host: true, // Listen on 0.0.0.0 (Required for Cloud Run/Docker)
+      host: '0.0.0.0',
       port: port,
       strictPort: true,
-      allowedHosts: true, // Allow cloud-run domain names
       cors: true,
+      // allowedHosts removed to prevent crashes on older Vite containers
     },
   };
 });
