@@ -1,10 +1,19 @@
-
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Modality, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { SAMPLE_PROMPT, STORY_PROMPT, MODELS } from '../constants';
 import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment, TimeRange, StoryResponse } from '../types';
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Ensure we handle potential Vite env var scenarios if process.env.API_KEY is missing directly
+const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY }); 
+
+// Common Safety Settings to prevent "No response" on valid video content
+const SAFETY_SETTINGS = [
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 // --- Helper: File to Base64 Part ---
 const fileToPart = async (file: File): Promise<any> => {
@@ -206,12 +215,16 @@ export const generateStoryFromImages = async (files: File[], context?: string): 
         }],
         config: {
             responseMimeType: 'application/json',
-            responseSchema: responseSchema
+            responseSchema: responseSchema,
+            safetySettings: SAFETY_SETTINGS,
         }
     });
 
     const text = response.text;
-    if(!text) throw new Error("Failed to generate story script");
+    if(!text) {
+        const reason = response.candidates?.[0]?.finishReason;
+        throw new Error(`Failed to generate story. Reason: ${reason || 'Unknown'}`);
+    }
 
     return parseJSONSafely(text) as StoryResponse;
 };
@@ -276,11 +289,15 @@ export const extractTranscript = async (
         config: {
             responseMimeType: 'application/json',
             responseSchema: transcriptSchema,
+            safetySettings: SAFETY_SETTINGS,
         },
     });
 
     const text = response.text;
-    if (!text) return [];
+    if (!text) {
+        console.warn("Transcript generation returned no text. FinishReason:", response.candidates?.[0]?.finishReason);
+        return [];
+    }
 
     try {
         return parseJSONSafely(text) as TranscriptSegment[];
@@ -342,6 +359,7 @@ export const analyzeVideo = async (
     config: {
       responseMimeType: 'application/json',
       responseSchema: responseSchema,
+      safetySettings: SAFETY_SETTINGS,
     },
   });
 
@@ -349,7 +367,10 @@ export const analyzeVideo = async (
   const [transcript, analysisResponse] = await Promise.all([transcriptPromise, analysisPromise]);
 
   const text = analysisResponse.text;
-  if (!text) throw new Error("No response from Gemini");
+  if (!text) {
+      const reason = analysisResponse.candidates?.[0]?.finishReason;
+      throw new Error(`No response from Gemini during Analysis. Reason: ${reason || 'Unknown'}`);
+  }
   
   let result: AnalysisResponse;
   try {
@@ -422,13 +443,16 @@ export const processUserCommand = async (
   1. **Be Precise**: When finding a clip, ensure the 'startTime' is EXACTLY when the action/speech starts.
   2. **Be Creative**: For 'CLIP_EDIT' intents, generate CSS filters or text overlays that match the mood.
   3. **Context Matters**: If a clip is selected, prioritize editing THAT clip over searching for new ones.
+  4. **Explicit Time Ranges**: If the user asks for a specific time range (e.g., "clip from 10s to 20s" or "play 1:00 to 1:30"), return intent 'SEARCH' with the explicit startTime and endTime.
 
   INTENTS:
-  - SEARCH: User wants to find a specific moment.
+  - SEARCH: User wants to find a specific moment OR specifies a time range to play/create.
   - REEL_ADD / REEL_REMOVE / REEL_CLEAR: Manage the highlight reel.
   - EDIT: Global visual effect or auto-edit on the whole video.
   - CLIP_EDIT: Modify the currently selected clip. 
       - **TIMESTAMPS**: If user asks to "trim", "cut", "shorten", "remove first 5s", or "extend", you MUST calculate the NEW startTime/endTime and return them.
+        - **IMPORTANT**: Calculate relative to the CURRENT clip. If clip starts at 20s and user says "remove first 5s", NEW startTime is 25s.
+        - Do not return +5. Return the absolute timestamp (e.g., 25.0).
       - If user says "Translate", provide 'subtitles' field.
       - If user says "Add [thing]", provide 'overlay' field.
       - **CRITICAL**: If user says "Enhance", "Vintage", "Black and White" or "Make it [style]", you MUST provide valid CSS syntax for 'filterStyle'.
@@ -503,6 +527,7 @@ export const processUserCommand = async (
   const config: any = {
     responseMimeType: 'application/json',
     responseSchema: responseSchema,
+    safetySettings: SAFETY_SETTINGS,
   };
 
   if (modelName.toLowerCase().includes('pro')) {
@@ -524,7 +549,10 @@ export const processUserCommand = async (
   });
 
   const text = response.text;
-  if (!text) throw new Error("No response from Gemini");
+  if (!text) {
+      const reason = response.candidates?.[0]?.finishReason;
+      throw new Error(`No response from Gemini Copilot. Reason: ${reason || 'Unknown'}`);
+  }
 
   let copilotResponse: CopilotResponse;
   
