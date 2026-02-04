@@ -2,30 +2,31 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
-  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
+  // 1. Load env vars from .env files
   const env = loadEnv(mode, process.cwd(), '');
   
-  // Cloud Run sets the PORT environment variable (usually 8080)
-  const port = parseInt(env.PORT || '8080');
+  // 2. Determine Port: Prefer System Env (Cloud Run) > .env > Default
+  // Note: Cloud Run injects PORT into process.env, which loadEnv might not merge by default.
+  const port = process.env.PORT ? parseInt(process.env.PORT) : (parseInt(env.PORT || '8080'));
+
+  console.log(`🚀 Starting Vite Server on PORT: ${port}`);
 
   return {
     plugins: [react()],
     server: {
-      // Required for Cloud Run: Bind to 0.0.0.0 to accept external connections
-      host: '0.0.0.0',
+      host: true, // Listen on 0.0.0.0 (Required for Cloud Run/Docker)
       port: port,
-      // Ensure the server fails if the port is busy, rather than switching ports randomly
-      strictPort: true, 
+      strictPort: true, // Fail if port is busy
+      allowedHosts: true, // Allow cloud-run domain names
+      cors: true,
     },
     preview: {
-      // Configuration for 'vite preview' command
-      host: '0.0.0.0',
+      host: true, // Listen on 0.0.0.0 (Required for Cloud Run/Docker)
       port: port,
       strictPort: true,
-      allowedHosts: true
+      allowedHosts: true, // Allow cloud-run domain names
+      cors: true,
     },
   };
 });
