@@ -4,9 +4,9 @@ import { SAMPLE_PROMPT, STORY_PROMPT, MODELS } from '../constants';
 import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment, TimeRange, StoryResponse } from '../types';
 
 // Initialize Gemini Client
-// Ensure we handle potential Vite env var scenarios if process.env.API_KEY is missing directly
-const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
-const ai = new GoogleGenAI({ apiKey: apiKey }); // Fixed: Use the resolved apiKey variable
+// Fixed: Safely check if process is defined (Node) before accessing it, otherwise use import.meta.env (Vite)
+const apiKey = (typeof process !== "undefined" ? process.env.API_KEY : undefined) || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey: apiKey }); 
 
 // Common Safety Settings to prevent "No response" on valid video content
 const SAFETY_SETTINGS = [
