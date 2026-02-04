@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type, Modality, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { SAMPLE_PROMPT, STORY_PROMPT, MODELS } from '../constants';
 import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment, TimeRange, StoryResponse } from '../types';
@@ -5,7 +6,7 @@ import { AnalysisResponse, Clip, CopilotResponse, TranscriptSegment, TimeRange, 
 // Initialize Gemini Client
 // Ensure we handle potential Vite env var scenarios if process.env.API_KEY is missing directly
 const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || "";
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY }); 
+const ai = new GoogleGenAI({ apiKey: apiKey }); // Fixed: Use the resolved apiKey variable
 
 // Common Safety Settings to prevent "No response" on valid video content
 const SAFETY_SETTINGS = [
@@ -14,6 +15,29 @@ const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
+
+/**
+ * Validates the Gemini API connection by making a lightweight model call.
+ */
+export const validateGeminiConnection = async (): Promise<{ success: boolean; message: string }> => {
+    if (!apiKey) {
+        return { success: false, message: "Missing API Key" };
+    }
+    if (apiKey.startsWith("project-")) {
+         return { success: false, message: "Invalid Key Format (Looks like Project ID)" };
+    }
+    try {
+        // Use countTokens on ai.models instead of creating a model instance
+        await ai.models.countTokens({ 
+            model: MODELS.FLASH,
+            contents: [{ role: 'user', parts: [{ text: 'test' }] }] 
+        });
+        return { success: true, message: "Connected" };
+    } catch (e: any) {
+        console.error("Gemini Validation Failed:", e);
+        return { success: false, message: e.message || "Connection Failed" };
+    }
+};
 
 // --- Helper: File to Base64 Part ---
 const fileToPart = async (file: File): Promise<any> => {
@@ -449,15 +473,16 @@ export const processUserCommand = async (
   - SEARCH: User wants to find a specific moment OR specifies a time range to play/create.
   - REEL_ADD / REEL_REMOVE / REEL_CLEAR: Manage the highlight reel.
   - EDIT: Global visual effect or auto-edit on the whole video.
-  - CLIP_EDIT: Modify the currently selected clip. 
-      - **TIMESTAMPS**: If user asks to "trim", "cut", "shorten", "remove first 5s", or "extend", you MUST calculate the NEW startTime/endTime and return them.
-        - **IMPORTANT**: Calculate relative to the CURRENT clip. If clip starts at 20s and user says "remove first 5s", NEW startTime is 25s.
-        - Do not return +5. Return the absolute timestamp (e.g., 25.0).
-      - If user says "Translate", provide 'subtitles' field.
-      - If user says "Add [thing]", provide 'overlay' field.
-      - **CRITICAL**: If user says "Enhance", "Vintage", "Black and White" or "Make it [style]", you MUST provide valid CSS syntax for 'filterStyle'.
+      - **VISUAL STYLES**: If user says "Vintage", "Black and White", "Cinematic" AND no clip is selected, use 'EDIT'.
+      - **CRITICAL**: Provide valid CSS syntax for 'filterStyle'. 
         - Valid: "grayscale(1)", "sepia(0.8) contrast(1.2)", "saturate(2) brightness(1.1)", "blur(2px)".
         - INVALID: "vintage", "black_and_white", "warm". Do NOT return these.
+      - If no specific time range or silence removal is requested, do NOT return 'keepSegments' (implies whole video).
+  - CLIP_EDIT: Modify the currently selected clip. 
+      - **TIMESTAMPS**: If user asks to "trim", "cut", "shorten", "remove first 5s", or "extend", you MUST calculate the NEW startTime/endTime and return them.
+      - If user says "Translate", provide 'subtitles' field.
+      - If user says "Add [thing]", provide 'overlay' field.
+      - If user says "Enhance", "Vintage", "Black and White" for THIS clip, return 'filterStyle' with valid CSS.
 
   OUTPUT format MUST be JSON matching the schema.
   `;

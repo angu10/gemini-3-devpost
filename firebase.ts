@@ -1,6 +1,6 @@
 
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
 
 // ============================================================================
 // 1. SETUP INSTRUCTIONS
@@ -66,5 +66,29 @@ if (isConfigured) {
 } else {
   console.info("ℹ️ Firebase config missing or default. App running in Stateless/Local Mode.");
 }
+
+export const validateFirebaseConnection = async (): Promise<{ success: boolean; message: string }> => {
+    if (!db) return { success: false, message: "Firebase not configured" };
+    try {
+        // Simple connectivity check - trying to read a dummy doc to verify permissions/connection
+        // We use a non-existent doc path, but even checking existence requires read permissions.
+        const testRef = doc(db, "health_check", "ping");
+        await getDoc(testRef); 
+        return { success: true, message: "Connected" };
+    } catch (e: any) {
+        console.error("Firebase Validation Failed:", e);
+        
+        let msg = "Connection Failed";
+        if (e.code === 'permission-denied') {
+            msg = "Missing Permissions (Check Rules)";
+        } else if (e.code === 'unavailable') {
+            msg = "Offline / Network Error";
+        } else if (e.message && e.message.includes("offline")) {
+            msg = "Client Offline";
+        }
+        
+        return { success: false, message: msg };
+    }
+};
 
 export { db };

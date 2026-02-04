@@ -2,10 +2,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Clip, AppState, AnalysisResponse, VirtualEdit, ChatMessage, PlayerMode, TranscriptSegment, ClipEdit, AppMode } from './types';
 import { MAX_FILE_SIZE_MB, MODELS, DEFAULT_MODEL } from './constants';
-import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages, generateTTS } from './services/geminiService';
+import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages, generateTTS, validateGeminiConnection } from './services/geminiService';
 import { getCachedAnalysis, saveAnalysisToCache } from './services/dbService';
 import { Button } from './components/Button';
-import { db } from './firebase';
+import { db, validateFirebaseConnection } from './firebase';
 
 // --- Helper: Decode Raw PCM from Gemini ---
 const decodePCM = (
@@ -67,6 +67,10 @@ export const App: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>("Processing...");
   const [videoDuration, setVideoDuration] = useState<number>(0);
+  
+  // System Health
+  const [geminiStatus, setGeminiStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [firebaseStatus, setFirebaseStatus] = useState<{ success: boolean; message: string } | null>(null);
 
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -82,6 +86,18 @@ export const App: React.FC = () => {
       if (videoUrl) URL.revokeObjectURL(videoUrl);
     };
   }, [videoUrl]);
+  
+  // Run Connection Checks on Mount
+  useEffect(() => {
+      const runChecks = async () => {
+          const gStatus = await validateGeminiConnection();
+          setGeminiStatus(gStatus);
+          
+          const fStatus = await validateFirebaseConnection();
+          setFirebaseStatus(fStatus);
+      };
+      runChecks();
+  }, []);
 
   // Scroll chat to bottom
   useEffect(() => {
@@ -382,40 +398,50 @@ export const App: React.FC = () => {
 
       // --- HANDLE ACTIONS ---
 
-      if (result.intent === 'CLIP_EDIT' && result.data && activeClipId) {
-         // 1. Handle Visual/Text Edits
-         setClipEdits(prev => ({ 
-             ...prev, 
-             [activeClipId]: { 
-                 id: activeClipId, 
-                 filterStyle: result.data.filterStyle || prev[activeClipId]?.filterStyle, 
-                 subtitles: result.data.subtitles || prev[activeClipId]?.subtitles, 
-                 overlay: result.data.overlay || prev[activeClipId]?.overlay 
-             } 
-         }));
+      if (result.intent === 'CLIP_EDIT' && result.data) {
+         if (activeClipId) {
+             // 1. Handle Visual/Text Edits for specific clip
+             setClipEdits(prev => ({ 
+                 ...prev, 
+                 [activeClipId]: { 
+                     id: activeClipId, 
+                     filterStyle: result.data.filterStyle || prev[activeClipId]?.filterStyle, 
+                     subtitles: result.data.subtitles || prev[activeClipId]?.subtitles, 
+                     overlay: result.data.overlay || prev[activeClipId]?.overlay 
+                 } 
+             }));
 
-         // 2. Handle Timestamp Edits (Trimming/Extending)
-         if (result.data.startTime !== undefined || result.data.endTime !== undefined) {
-             setAnalysisData(prev => {
-                 if (!prev) return null;
-                 const updatedClips = prev.clips.map(c => {
-                     if (c.id === activeClipId) {
-                         return {
-                             ...c,
-                             startTime: result.data.startTime !== undefined ? result.data.startTime : c.startTime,
-                             endTime: result.data.endTime !== undefined ? result.data.endTime : c.endTime
-                         };
-                     }
-                     return c;
+             // 2. Handle Timestamp Edits (Trimming/Extending)
+             if (result.data.startTime !== undefined || result.data.endTime !== undefined) {
+                 setAnalysisData(prev => {
+                     if (!prev) return null;
+                     const updatedClips = prev.clips.map(c => {
+                         if (c.id === activeClipId) {
+                             return {
+                                 ...c,
+                                 startTime: result.data.startTime !== undefined ? result.data.startTime : c.startTime,
+                                 endTime: result.data.endTime !== undefined ? result.data.endTime : c.endTime
+                             };
+                         }
+                         return c;
+                     });
+                     return { ...prev, clips: updatedClips };
                  });
-                 return { ...prev, clips: updatedClips };
-             });
-             
-             // Seek to new start time immediately to show user the change
-             if (result.data.startTime !== undefined && videoRef.current) {
-                 videoRef.current.currentTime = result.data.startTime;
-                 videoRef.current.play();
+                 
+                 // Seek to new start time immediately
+                 if (result.data.startTime !== undefined && videoRef.current) {
+                     videoRef.current.currentTime = result.data.startTime;
+                     videoRef.current.play();
+                 }
              }
+         } else if (result.data.filterStyle) {
+             // FALLBACK: User asked for a visual style but no clip is selected -> Apply Globally
+             setVirtualEdit({ 
+                 isActive: true, 
+                 description: "Global Filter (Fallback)", 
+                 keepSegments: [], // Empty means play full video
+                 filterStyle: result.data.filterStyle
+             });
          }
       }
       else if (result.intent === 'REEL_ADD' && result.data) {
@@ -444,7 +470,13 @@ export const App: React.FC = () => {
         });
       } else if (result.intent === 'REEL_CLEAR') setReel([]);
       else if (result.intent === 'EDIT' && result.data) {
-        setVirtualEdit({ isActive: true, description: result.data.description, keepSegments: result.data.keepSegments || [{ start: 0, end: 100 }], filterStyle: result.data.filterStyle, transitionEffect: result.data.transitionEffect });
+        setVirtualEdit({ 
+            isActive: true, 
+            description: result.data.description, 
+            keepSegments: result.data.keepSegments || [], // Empty implies full video
+            filterStyle: result.data.filterStyle, 
+            transitionEffect: result.data.transitionEffect 
+        });
       } else if (result.intent === 'SEARCH' && result.data) {
          const clip = result.data as Clip;
          if (clip.startTime === -1) {
@@ -520,7 +552,9 @@ export const App: React.FC = () => {
       }
     }
 
-    if (playerMode === 'FULL' && virtualEdit?.isActive && virtualEdit.keepSegments.length > 0) {
+    // Virtual Edit Logic (Smart Edits & Global Filters)
+    // Only enforce segments if they actually exist (non-empty)
+    if (playerMode === 'FULL' && virtualEdit?.isActive && virtualEdit.keepSegments && virtualEdit.keepSegments.length > 0) {
       const inValid = virtualEdit.keepSegments.some(s => currentTime >= s.start && currentTime < s.end);
       if (!inValid) {
         const next = virtualEdit.keepSegments.find(s => s.start > currentTime);
@@ -720,6 +754,21 @@ export const App: React.FC = () => {
           <div className="max-w-full mx-auto px-6 h-full flex items-center justify-between">
             <div className="flex items-center gap-4">
                <h1 onClick={() => setAppMode('LANDING')} className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400 cursor-pointer hover:opacity-80 transition-opacity">SmartClip.ai</h1>
+               {/* SYSTEM HEALTH INDICATOR */}
+               <div className="hidden md:flex items-center gap-2 text-[10px] ml-4">
+                    {geminiStatus && (
+                        <span className={`px-2 py-0.5 rounded border flex items-center gap-1 ${geminiStatus.success ? 'bg-blue-900/20 text-blue-300 border-blue-900' : 'bg-red-900/20 text-red-300 border-red-900'}`} title={geminiStatus.message}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${geminiStatus.success ? 'bg-blue-400' : 'bg-red-400'}`}></span>
+                            Gemini
+                        </span>
+                    )}
+                    {firebaseStatus && (
+                        <span className={`px-2 py-0.5 rounded border flex items-center gap-1 ${firebaseStatus.success ? 'bg-green-900/20 text-green-300 border-green-900' : 'bg-yellow-900/20 text-yellow-300 border-yellow-900'}`} title={firebaseStatus.message}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${firebaseStatus.success ? 'bg-green-400' : 'bg-yellow-400'}`}></span>
+                            DB
+                        </span>
+                    )}
+               </div>
             </div>
             
             {appMode !== 'LANDING' && (
@@ -755,6 +804,13 @@ export const App: React.FC = () => {
             )}
           </div>
         </header>
+
+        {/* Global Error Banner */}
+        {geminiStatus?.success === false && appMode === 'LANDING' && (
+            <div className="bg-red-900/50 border-b border-red-800 p-2 text-center text-xs text-red-200">
+                ⚠️ <b>Gemini API Error:</b> {geminiStatus.message}. Please check your .env file.
+            </div>
+        )}
 
         <div className="flex flex-1 overflow-hidden">
           
