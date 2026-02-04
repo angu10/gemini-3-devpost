@@ -10,13 +10,17 @@ export default defineConfig(({ mode }) => {
   // 2. Determine Port: Prefer System Env (Cloud Run) > .env > Default
   const port = process.env.PORT ? parseInt(process.env.PORT) : (parseInt(env.PORT || '8080'));
 
+  // 3. Resolve API Key from all possible sources
+  // Cloud Run/System Env (API_KEY) > .env (VITE_GEMINI_API_KEY)
+  const apiKey = process.env.API_KEY || env.API_KEY || env.VITE_GEMINI_API_KEY || env.REACT_APP_GEMINI_API_KEY;
+
   console.log(`🚀 Starting Vite Server on PORT: ${port}`);
 
   return {
     plugins: [react()],
     // Polyfill process.env for client-side code to prevent crashes
     define: {
-      'process.env.API_KEY': JSON.stringify(env.API_KEY),
+      'process.env.API_KEY': JSON.stringify(apiKey),
       'process.env': {}
     },
     server: {
@@ -24,6 +28,9 @@ export default defineConfig(({ mode }) => {
       port: port,
       strictPort: true,
       cors: true,
+      headers: {
+        "Access-Control-Expose-Headers": "x-google-upload-url"
+      },
       hmr: {
         clientPort: 443 // Force HMR to use HTTPS standard port for Cloud/IDX proxies
       }
@@ -33,6 +40,9 @@ export default defineConfig(({ mode }) => {
       port: port,
       strictPort: true,
       cors: true,
+      headers: {
+        "Access-Control-Expose-Headers": "x-google-upload-url"
+      }
     },
   };
 });

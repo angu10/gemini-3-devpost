@@ -1,5 +1,8 @@
 {
   "name": "SmartClip.ai",
   "description": "An AI-powered video repurposing tool that uses Gemini 3 Pro to automatically identify, title, and extract viral short clips from long-form videos.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "exposedHeaders": [
+    "x-google-upload-url"
+  ]
 }
