@@ -173,13 +173,11 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
     return merged;
 };
 
-// --- MANUAL MULTIPART UPLOAD IMPLEMENTATION ---
-// This bypasses the Google GenAI SDK's resumable upload which relies on headers
-// that are often stripped by proxies (like Project IDX or corporate firewalls).
+// --- MULTIPART UPLOAD IMPLEMENTATION (PROXY ENABLED) ---
 const uploadFileMultipart = async (file: File): Promise<any> => {
-    // FIX: The API expects a CreateFileRequest object: { file: { displayName: ... } }
-    const metadata = { file: { displayName: file.name } };
-    const boundary = '-------314159265358979323846'; // Random string
+    // FIX 1: Correct Metadata Format (No 'file' wrapper)
+    const metadata = { displayName: file.name };
+    const boundary = '-------314159265358979323846'; 
     const delimiter = "\r\n--" + boundary + "\r\n";
     const close_delim = "\r\n--" + boundary + "--";
 
@@ -191,7 +189,7 @@ const uploadFileMultipart = async (file: File): Promise<any> => {
 
             // Construct multipart body manually
             const multipartRequestBody =
-                "--" + boundary + "\r\n" +
+                delimiter +
                 'Content-Type: ' + metadataContentType + '\r\n\r\n' +
                 JSON.stringify(metadata) +
                 delimiter +
@@ -205,8 +203,8 @@ const uploadFileMultipart = async (file: File): Promise<any> => {
             
             const requestBody = new Blob(parts, { type: 'multipart/related; boundary=' + boundary });
 
-            // Direct call to the upload endpoint with uploadType=multipart
-            const url = `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=multipart`;
+            // FIX 2: Use Proxy URL to avoid Service Worker interception and Header stripping
+            const url = `/api-proxy/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=multipart`;
             
             try {
                 const response = await fetch(url, {
@@ -226,7 +224,6 @@ const uploadFileMultipart = async (file: File): Promise<any> => {
                 
                 // The result usually contains { file: { name: '...', uri: '...' } }
                 // Or sometimes just the file object directly depending on the API version.
-                // We normalize it here.
                 const fileData = result.file || result;
                 
                 if (!fileData || !fileData.name) {
@@ -247,11 +244,9 @@ const uploadFileMultipart = async (file: File): Promise<any> => {
  * Uploads a file to the Gemini File API.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
-  if (onProgress) onProgress("Uploading video to Gemini (Multipart)...");
+  if (onProgress) onProgress("Uploading video to Gemini (Proxy Multipart)...");
   
   try {
-    // REPLACED SDK UPLOAD WITH MANUAL MULTIPART UPLOAD
-    // Old: const uploadResult = await ai.files.upload({ file: file, config: { displayName: file.name } });
     const uploadFileResource = await uploadFileMultipart(file);
 
     // After upload, we still use the SDK to poll the status (GET requests are safe)

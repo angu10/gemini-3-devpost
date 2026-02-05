@@ -37,6 +37,14 @@ export default defineConfig(({ mode }) => {
       headers: {
         "Access-Control-Expose-Headers": "x-google-upload-url"
       },
+      proxy: {
+        '/api-proxy': {
+          target: 'https://generativelanguage.googleapis.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api-proxy/, ''),
+          secure: false
+        }
+      },
       hmr: {
         clientPort: 443 // Force HMR to use HTTPS standard port for Cloud/IDX proxies
       }
@@ -48,7 +56,15 @@ export default defineConfig(({ mode }) => {
       cors: true,
       headers: {
         "Access-Control-Expose-Headers": "x-google-upload-url"
-      }
+      },
+      proxy: {
+        '/api-proxy': {
+          target: 'https://generativelanguage.googleapis.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api-proxy/, ''),
+          secure: false
+        }
+      },
     },
   };
 });
