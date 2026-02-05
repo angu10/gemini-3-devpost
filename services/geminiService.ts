@@ -181,12 +181,14 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
     if (onProgress) onProgress("Initializing upload...");
 
     // 1. Initiate Resumable Upload (Proxied)
-    // We use the proxy path defined in vite.config.ts
-    const initUrl = `/api-proxy/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=resumable`;
+    // We pass the API key via HEADER 'x-goog-api-key' instead of query param 
+    // to prevent encoding issues and 400 Bad Request errors.
+    const initUrl = `/api-proxy/upload/v1beta/files?uploadType=resumable`;
     
     const initResponse = await fetch(initUrl, {
       method: 'POST',
       headers: {
+        'x-goog-api-key': process.env.API_KEY || '',
         'X-Goog-Upload-Protocol': 'resumable',
         'X-Goog-Upload-Command': 'start',
         'X-Goog-Upload-Header-Content-Length': file.size.toString(),
@@ -216,9 +218,11 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
   
     // 4. Perform Actual Upload (Streamed via Proxy)
     // We use the Blob directly so the browser streams it (memory efficient)
+    // We also include the API Key header again for safety, though the uploadUrl usually encodes auth.
     const uploadResponse = await fetch(uploadUrl, {
       method: 'POST', // 'upload, finalize' command works with POST on the session URI
       headers: {
+        'x-goog-api-key': process.env.API_KEY || '',
         'Content-Length': file.size.toString(),
         'X-Goog-Upload-Offset': '0',
         'X-Goog-Upload-Command': 'upload, finalize',
