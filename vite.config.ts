@@ -10,9 +10,10 @@ export default defineConfig(({ mode }) => {
   const port = process.env.PORT ? parseInt(process.env.PORT) : (parseInt(env.PORT || '8080'));
 
   // 3. Resolve API Key - CRITICAL FIX:
-  // Prioritize `VITE_GEMINI_API_KEY` from .env over `process.env.API_KEY`.
-  // Cloud environments often inject a generic `API_KEY` which is not valid for Gemini.
-  const apiKey = env.VITE_GEMINI_API_KEY || process.env.API_KEY || env.API_KEY || env.REACT_APP_GEMINI_API_KEY || '';
+  // Cloud environments (IDX) inject process.env.API_KEY with a project ID (e.g. "project-...")
+  // which is NOT a valid Gemini API key and causes 400 INVALID_ARGUMENT on file uploads.
+  // All .env-sourced keys must be checked BEFORE the cloud-injected process.env.API_KEY.
+  const apiKey = env.VITE_GEMINI_API_KEY || env.VITE_API_KEY || env.REACT_APP_GEMINI_API_KEY || env.API_KEY || process.env.API_KEY || '';
 
   console.log(`🚀 Starting Vite Server on PORT: ${port}`);
   if (apiKey) {
