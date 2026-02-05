@@ -4,8 +4,8 @@ import ReactDOM from 'react-dom/client';
 import { App } from './App';
 
 // CRITICAL FIX: Aggressive Service Worker Cleanup
-// If a Service Worker is controlling the page, it causes the "missing x-google-upload-url" error
-// by stripping headers from the Google API response.
+// We use sessionStorage to ensure we only force-reload ONCE per session to clean up workers.
+// This prevents infinite reload loops in environments like Project IDX.
 const nukeServiceWorkers = async () => {
   if ('serviceWorker' in navigator) {
     try {
@@ -18,12 +18,20 @@ const nukeServiceWorkers = async () => {
         unregisterCount++;
       }
 
-      // If we removed a worker, or if one is currently controlling the page, we MUST reload.
-      if (unregisterCount > 0 || navigator.serviceWorker.controller) {
+      // Check if we already reloaded for cleanup in this session
+      const hasReloaded = sessionStorage.getItem('sw_cleaned_v2');
+
+      if (!hasReloaded && (unregisterCount > 0 || navigator.serviceWorker.controller)) {
         console.warn('🔄 Service Worker removed. Forcing reload to apply changes...');
+        sessionStorage.setItem('sw_cleaned_v2', 'true');
         window.location.reload();
         return true; // Indicates a reload is happening
       }
+      
+      if (hasReloaded) {
+          console.log("✅ Service Worker cleanup check passed (already reloaded).");
+      }
+
     } catch (e) {
       console.warn('Service Worker cleanup warning:', e);
     }

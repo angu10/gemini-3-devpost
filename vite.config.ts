@@ -4,24 +4,30 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   // 1. Load env vars from .env files
-  // Fix: Cast process to any to handle type mismatch for cwd()
-  const env = loadEnv(mode, (process as any).cwd(), '');
+  const env = loadEnv(mode, process.cwd(), '');
   
-  // 2. Determine Port: Prefer System Env (Cloud Run) > .env > Default
+  // 2. Determine Port
   const port = process.env.PORT ? parseInt(process.env.PORT) : (parseInt(env.PORT || '8080'));
 
-  // 3. Resolve API Key from all possible sources
-  // Cloud Run/System Env (API_KEY) > .env (VITE_GEMINI_API_KEY)
-  const apiKey = process.env.API_KEY || env.API_KEY || env.VITE_GEMINI_API_KEY || env.REACT_APP_GEMINI_API_KEY;
+  // 3. Resolve API Key - CRITICAL FIX:
+  // Prioritize `VITE_GEMINI_API_KEY` from .env over `process.env.API_KEY`.
+  // Cloud environments often inject a generic `API_KEY` which is not valid for Gemini.
+  const apiKey = env.VITE_GEMINI_API_KEY || process.env.API_KEY || env.API_KEY || env.REACT_APP_GEMINI_API_KEY || '';
 
   console.log(`🚀 Starting Vite Server on PORT: ${port}`);
+  if (apiKey) {
+      console.log(`🔑 API Key loaded (starts with): ${apiKey.substring(0, 8)}...`);
+  } else {
+      console.error(`❌ NO API KEY FOUND! Check your .env file.`);
+  }
 
   return {
     plugins: [react()],
-    // Polyfill process.env for client-side code to prevent crashes
+    // Polyfill process.env for client-side code
     define: {
       'process.env.API_KEY': JSON.stringify(apiKey),
-      'process.env': {}
+      // Safely polyfill process.env without overwriting keys
+      'process.env': {} 
     },
     server: {
       host: '0.0.0.0', 
