@@ -186,8 +186,7 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
     const formData = new FormData();
     
     // Part 1: Metadata (JSON)
-    // FIX: Removing { file: ... } wrapper. The API expects the File resource properties (like displayName) at the root level of the metadata JSON.
-    formData.append('metadata', new Blob([JSON.stringify({ displayName: file.name })], { type: 'application/json' }));
+    formData.append('metadata', new Blob([JSON.stringify({ file: { displayName: file.name } })], { type: 'application/json' }));
     
     // Part 2: File
     formData.append('file', file, file.name);
