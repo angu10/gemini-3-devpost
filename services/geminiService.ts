@@ -173,92 +173,52 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
     return merged;
 };
 
-// --- MULTIPART UPLOAD IMPLEMENTATION (OPTIMIZED STREAMING) ---
-// Uses Blob construction to stream file data instead of reading entirely into memory.
-const uploadFileMultipart = async (file: File): Promise<any> => {
-    const metadata = { displayName: file.name };
-    const boundary = '-------314159265358979323846';
-    const mimeType = file.type || 'application/octet-stream';
-
-    // Construct multipart headers
-    // Part 1: Metadata + Start of File Part
-    const headerPart = 
-        `--${boundary}\r\n` +
-        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-        JSON.stringify(metadata) + `\r\n` +
-        `--${boundary}\r\n` +
-        `Content-Type: ${mimeType}\r\n\r\n`;
-
-    // Part 3: End Boundary
-    const footerPart = `\r\n--${boundary}--`;
-
-    // Construct Blob directly with File object (Browser streams it, prevents OOM)
-    const requestBody = new Blob([headerPart, file, footerPart], { 
-        type: `multipart/related; boundary=${boundary}` 
-    });
-
-    // Use Proxy URL to avoid Service Worker interception and Header stripping
-    const url = `/api-proxy/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=multipart`;
-
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': `multipart/related; boundary=${boundary}`
-        },
-        body: requestBody
-    });
-
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Upload failed: ${response.status} ${errText}`);
-    }
-
-    const result = await response.json();
-    const fileData = result.file || result;
-
-    if (!fileData || !fileData.name) {
-        throw new Error("Invalid response structure from Gemini Upload");
-    }
-
-    return fileData;
-};
-
 /**
- * Uploads a file to the Gemini File API.
+ * Uploads a file to the Gemini File API using SDK's Resumable Upload.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
-  if (onProgress) onProgress("Uploading video to Gemini (Optimized Stream)...");
-  
-  try {
-    const uploadFileResource = await uploadFileMultipart(file);
+    if (onProgress) onProgress("Uploading video to Gemini...");
 
-    // After upload, we still use the SDK to poll the status (GET requests are safe)
-    let fileInfo = await ai.files.get({ name: uploadFileResource.name });
-    
+    // Unregister service worker before upload so the SDK
+    // goes directly to Google (fast resumable upload).
+    // The API key is baked into the client - no proxy needed.
+    if ('serviceWorker' in navigator) {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.unregister();
+        }
+      } catch (e) { /* ignored */ }
+    }
+
+    // Now this goes directly to Google - fast resumable upload
+    const uploadResult = await ai.files.upload({
+      file: file,
+      config: { displayName: file.name },
+    });
+
+    let fileInfo = await ai.files.get({ name: uploadResult.name });
+
     if (onProgress) onProgress("Processing video...");
-    
+
     let attempts = 0;
-    const maxAttempts = 60; // 2 minutes
+    const maxAttempts = 60;
 
     while (fileInfo.state === 'PROCESSING') {
-        if (attempts >= maxAttempts) {
-            throw new Error("Video processing timed out.");
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        fileInfo = await ai.files.get({ name: uploadFileResource.name });
-        attempts++;
+      if (attempts >= maxAttempts) {
+        throw new Error("Video processing timed out.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      fileInfo = await ai.files.get({ name: uploadResult.name });
+      attempts++;
     }
 
     if (fileInfo.state === 'FAILED') {
-        throw new Error('Video processing failed.');
+      throw new Error('Video processing failed.');
     }
 
     if (onProgress) onProgress("Ready for analysis.");
     return fileInfo.uri;
-  } catch (error: any) {
-      console.error("Upload Error:", error);
-      throw error;
-  }
 };
 
 /**
