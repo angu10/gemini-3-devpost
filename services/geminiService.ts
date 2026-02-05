@@ -173,19 +173,89 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
     return merged;
 };
 
+// --- MANUAL MULTIPART UPLOAD IMPLEMENTATION ---
+// This bypasses the Google GenAI SDK's resumable upload which relies on headers
+// that are often stripped by proxies (like Project IDX or corporate firewalls).
+const uploadFileMultipart = async (file: File): Promise<any> => {
+    // FIX: The API expects a CreateFileRequest object: { file: { displayName: ... } }
+    const metadata = { file: { displayName: file.name } };
+    const boundary = '-------314159265358979323846'; // Random string
+    const delimiter = "\r\n--" + boundary + "\r\n";
+    const close_delim = "\r\n--" + boundary + "--";
+
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const contentType = file.type || 'application/octet-stream';
+            const metadataContentType = 'application/json; charset=UTF-8';
+
+            // Construct multipart body manually
+            const multipartRequestBody =
+                "--" + boundary + "\r\n" +
+                'Content-Type: ' + metadataContentType + '\r\n\r\n' +
+                JSON.stringify(metadata) +
+                delimiter +
+                'Content-Type: ' + contentType + '\r\n\r\n';
+
+            const parts = [
+                multipartRequestBody, 
+                e.target?.result as ArrayBuffer, 
+                close_delim
+            ];
+            
+            const requestBody = new Blob(parts, { type: 'multipart/related; boundary=' + boundary });
+
+            // Direct call to the upload endpoint with uploadType=multipart
+            const url = `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=multipart`;
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'multipart/related; boundary=' + boundary
+                    },
+                    body: requestBody
+                });
+                
+                if (!response.ok) {
+                    const errText = await response.text();
+                    throw new Error(`Upload failed: ${response.status} ${errText}`);
+                }
+                
+                const result = await response.json();
+                
+                // The result usually contains { file: { name: '...', uri: '...' } }
+                // Or sometimes just the file object directly depending on the API version.
+                // We normalize it here.
+                const fileData = result.file || result;
+                
+                if (!fileData || !fileData.name) {
+                    throw new Error("Invalid response structure from Gemini Upload");
+                }
+                
+                resolve(fileData);
+            } catch (err) {
+                reject(err);
+            }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+    });
+};
+
 /**
  * Uploads a file to the Gemini File API.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
-  if (onProgress) onProgress("Uploading video to Gemini...");
+  if (onProgress) onProgress("Uploading video to Gemini (Multipart)...");
   
   try {
-    const uploadResult = await ai.files.upload({
-        file: file,
-        config: { displayName: file.name },
-    });
+    // REPLACED SDK UPLOAD WITH MANUAL MULTIPART UPLOAD
+    // Old: const uploadResult = await ai.files.upload({ file: file, config: { displayName: file.name } });
+    const uploadFileResource = await uploadFileMultipart(file);
 
-    let fileInfo = await ai.files.get({ name: uploadResult.name });
+    // After upload, we still use the SDK to poll the status (GET requests are safe)
+    let fileInfo = await ai.files.get({ name: uploadFileResource.name });
     
     if (onProgress) onProgress("Processing video...");
     
@@ -197,7 +267,7 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
             throw new Error("Video processing timed out.");
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        fileInfo = await ai.files.get({ name: uploadResult.name });
+        fileInfo = await ai.files.get({ name: uploadFileResource.name });
         attempts++;
     }
 
@@ -209,12 +279,6 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
     return fileInfo.uri;
   } catch (error: any) {
       console.error("Upload Error:", error);
-      
-      // Specifically catch the Proxy/Service Worker header stripping issue
-      if (error.message && (error.message.includes('x-google-upload-url') || error.message.includes('Failed to get upload url'))) {
-          throw new Error("System configuration error detected. Please refresh your page (Ctrl+R) to clear old network proxies and try again.");
-      }
-      
       throw error;
   }
 };
