@@ -181,42 +181,24 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
     if (onProgress) onProgress("Uploading video (Multipart)...");
 
-    const metadata = { file: { displayName: file.name } };
-    const boundary = "genai-multipart-boundary"; // Arbitrary boundary string
-
-    // 1. Construct the Multipart Body
-    // We construct the parts manually to avoid loading the entire file into a string variable.
+    // 1. Construct the Multipart Body using FormData
+    // The browser automatically handles boundaries and content-type headers.
+    const formData = new FormData();
+    
     // Part 1: Metadata (JSON)
-    const metadataPart = [
-        `--${boundary}\r\n`,
-        `Content-Type: application/json\r\n\r\n`,
-        JSON.stringify(metadata),
-        `\r\n`
-    ].join('');
-
-    // Part 2: File Header
-    const fileHeader = [
-        `--${boundary}\r\n`,
-        `Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`
-    ].join('');
-
-    // Part 3: Footer
-    const footer = `\r\n--${boundary}--`;
-
-    // Combine into a single Blob (Metadata + File + Footer)
-    // This allows the browser to stream the file component efficiently.
-    const payload = new Blob([metadataPart, fileHeader, file, footer]);
+    formData.append('metadata', new Blob([JSON.stringify({ file: { displayName: file.name } })], { type: 'application/json' }));
+    
+    // Part 2: File
+    formData.append('file', file, file.name);
 
     // 2. Send Single POST Request
     // Direct Google API endpoint with Key in URL
     const uploadUrl = `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=multipart&key=${process.env.API_KEY}`;
 
+    // Note: Do NOT set Content-Type header. The browser sets it automatically with the correct boundary.
     const response = await fetch(uploadUrl, {
         method: 'POST',
-        headers: {
-            'Content-Type': `multipart/related; boundary=${boundary}`
-        },
-        body: payload
+        body: formData
     });
 
     if (!response.ok) {
