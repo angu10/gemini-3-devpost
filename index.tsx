@@ -3,40 +3,51 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 
-// CRITICAL FIX: Unregister any existing service workers.
-// Stale service workers from previous deployments often intercept API calls 
-// and strip critical headers like 'x-google-upload-url'.
-const safelyCleanupServiceWorkers = async () => {
+// CRITICAL FIX: Aggressive Service Worker Cleanup
+// If a Service Worker is controlling the page, it causes the "missing x-google-upload-url" error
+// by stripping headers from the Google API response.
+const nukeServiceWorkers = async () => {
   if ('serviceWorker' in navigator) {
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
+      let unregisterCount = 0;
+      
       for (const registration of registrations) {
-        console.log('Unregistering stale Service Worker:', registration);
-        try {
-          await registration.unregister();
-        } catch (e) {
-          console.warn('Failed to unregister worker:', e);
-        }
+        console.warn('⚠️ Found stale Service Worker:', registration);
+        await registration.unregister();
+        unregisterCount++;
+      }
+
+      // If we removed a worker, or if one is currently controlling the page, we MUST reload.
+      if (unregisterCount > 0 || navigator.serviceWorker.controller) {
+        console.warn('🔄 Service Worker removed. Forcing reload to apply changes...');
+        window.location.reload();
+        return true; // Indicates a reload is happening
       }
     } catch (e) {
-      // Ignored: "The document is in an invalid state" or other security context errors
-      // This often happens in Project IDX / Cloud Run previews if the iframe isn't ready.
-      console.warn('Skipping Service Worker cleanup (Environment Restricted):', e);
+      console.warn('Service Worker cleanup warning:', e);
     }
   }
+  return false;
 };
 
-// Execute safely without blocking render
-safelyCleanupServiceWorkers();
+const init = async () => {
+  const isReloading = await nukeServiceWorkers();
+  
+  // Do not mount the app if we are about to reload, avoids flickering
+  if (isReloading) return;
 
-const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error("Could not find root element to mount to");
-}
+  const rootElement = document.getElementById('root');
+  if (!rootElement) {
+    throw new Error("Could not find root element to mount to");
+  }
 
-const root = ReactDOM.createRoot(rootElement);
-root.render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+};
+
+init();

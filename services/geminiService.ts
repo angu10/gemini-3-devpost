@@ -179,33 +179,44 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
   if (onProgress) onProgress("Uploading video to Gemini...");
   
-  const uploadResult = await ai.files.upload({
-    file: file,
-    config: { displayName: file.name },
-  });
+  try {
+    const uploadResult = await ai.files.upload({
+        file: file,
+        config: { displayName: file.name },
+    });
 
-  let fileInfo = await ai.files.get({ name: uploadResult.name });
-  
-  if (onProgress) onProgress("Processing video...");
-  
-  let attempts = 0;
-  const maxAttempts = 60; // 2 minutes
+    let fileInfo = await ai.files.get({ name: uploadResult.name });
+    
+    if (onProgress) onProgress("Processing video...");
+    
+    let attempts = 0;
+    const maxAttempts = 60; // 2 minutes
 
-  while (fileInfo.state === 'PROCESSING') {
-    if (attempts >= maxAttempts) {
-        throw new Error("Video processing timed out.");
+    while (fileInfo.state === 'PROCESSING') {
+        if (attempts >= maxAttempts) {
+            throw new Error("Video processing timed out.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        fileInfo = await ai.files.get({ name: uploadResult.name });
+        attempts++;
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    fileInfo = await ai.files.get({ name: uploadResult.name });
-    attempts++;
-  }
 
-  if (fileInfo.state === 'FAILED') {
-    throw new Error('Video processing failed.');
-  }
+    if (fileInfo.state === 'FAILED') {
+        throw new Error('Video processing failed.');
+    }
 
-  if (onProgress) onProgress("Ready for analysis.");
-  return fileInfo.uri;
+    if (onProgress) onProgress("Ready for analysis.");
+    return fileInfo.uri;
+  } catch (error: any) {
+      console.error("Upload Error:", error);
+      
+      // Specifically catch the Proxy/Service Worker header stripping issue
+      if (error.message && (error.message.includes('x-google-upload-url') || error.message.includes('Failed to get upload url'))) {
+          throw new Error("System configuration error detected. Please refresh your page (Ctrl+R) to clear old network proxies and try again.");
+      }
+      
+      throw error;
+  }
 };
 
 /**
