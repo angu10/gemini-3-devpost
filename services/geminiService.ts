@@ -174,51 +174,85 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
 };
 
 /**
- * Uploads a file to the Gemini File API using SDK's Resumable Upload.
+ * Uploads a file using MANUAL Resumable Upload via Proxy.
+ * Bypasses SDK upload to avoid CORS/Header stripping issues in cloud environments.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
-    if (onProgress) onProgress("Uploading video to Gemini...");
+    if (onProgress) onProgress("Initializing upload...");
 
-    // Unregister service worker before upload so the SDK
-    // goes directly to Google (fast resumable upload).
-    // The API key is baked into the client - no proxy needed.
-    if ('serviceWorker' in navigator) {
-      try {
-        const registrations = await navigator.serviceWorker.getRegistrations();
-        for (const reg of registrations) {
-          await reg.unregister();
-        }
-      } catch (e) { /* ignored */ }
-    }
-
-    // Now this goes directly to Google - fast resumable upload
-    const uploadResult = await ai.files.upload({
-      file: file,
-      config: { displayName: file.name },
+    // 1. Initiate Resumable Upload (Proxied)
+    // We use the proxy path defined in vite.config.ts
+    const initUrl = `/api-proxy/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=resumable`;
+    
+    const initResponse = await fetch(initUrl, {
+      method: 'POST',
+      headers: {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': file.size.toString(),
+        'X-Goog-Upload-Header-Content-Type': file.type || 'application/octet-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file: { displayName: file.name } })
     });
-
-    let fileInfo = await ai.files.get({ name: uploadResult.name });
-
+  
+    if (!initResponse.ok) {
+       const text = await initResponse.text();
+       throw new Error(`Upload init failed: ${initResponse.status} - ${text}`);
+    }
+  
+    // 2. Get Upload URL from Headers
+    const uploadUrlRaw = initResponse.headers.get('x-goog-upload-url');
+    if (!uploadUrlRaw) {
+      throw new Error("Failed to get upload URL. Server did not return x-goog-upload-url.");
+    }
+  
+    // 3. Convert to Proxy URL
+    // The raw URL is absolute (e.g. https://generativelanguage.googleapis.com/upload/...)
+    // We strip the domain to route it through our /api-proxy
+    const uploadUrl = uploadUrlRaw.replace('https://generativelanguage.googleapis.com', '/api-proxy');
+  
+    if (onProgress) onProgress("Uploading video data...");
+  
+    // 4. Perform Actual Upload (Streamed via Proxy)
+    // We use the Blob directly so the browser streams it (memory efficient)
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST', // 'upload, finalize' command works with POST on the session URI
+      headers: {
+        'Content-Length': file.size.toString(),
+        'X-Goog-Upload-Offset': '0',
+        'X-Goog-Upload-Command': 'upload, finalize',
+      },
+      body: file
+    });
+  
+    if (!uploadResponse.ok) {
+       const text = await uploadResponse.text();
+       throw new Error(`File upload failed: ${uploadResponse.status} - ${text}`);
+    }
+  
+    const result = await uploadResponse.json();
+    const fileInfo = result.file;
+    
+    // 5. Poll for processing using the SDK (GET requests are safe)
     if (onProgress) onProgress("Processing video...");
-
+    
+    let currentFile = await ai.files.get({ name: fileInfo.name });
+    
     let attempts = 0;
-    const maxAttempts = 60;
-
-    while (fileInfo.state === 'PROCESSING') {
-      if (attempts >= maxAttempts) {
-        throw new Error("Video processing timed out.");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      fileInfo = await ai.files.get({ name: uploadResult.name });
+    const maxAttempts = 60; // 2 minutes
+  
+    while (currentFile.state === 'PROCESSING') {
+      if (attempts >= maxAttempts) throw new Error("Video processing timed out.");
+      await new Promise(r => setTimeout(r, 2000));
+      currentFile = await ai.files.get({ name: fileInfo.name });
       attempts++;
     }
-
-    if (fileInfo.state === 'FAILED') {
-      throw new Error('Video processing failed.');
-    }
-
+  
+    if (currentFile.state === 'FAILED') throw new Error("Video processing failed.");
+  
     if (onProgress) onProgress("Ready for analysis.");
-    return fileInfo.uri;
+    return currentFile.uri;
 };
 
 /**

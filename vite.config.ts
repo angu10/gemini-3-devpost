@@ -35,7 +35,7 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       cors: true,
       headers: {
-        "Access-Control-Expose-Headers": "x-google-upload-url"
+        "Access-Control-Expose-Headers": "x-goog-upload-url"
       },
       proxy: {
         '/api-proxy': {
@@ -55,7 +55,7 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       cors: true,
       headers: {
-        "Access-Control-Expose-Headers": "x-google-upload-url"
+        "Access-Control-Expose-Headers": "x-goog-upload-url"
       },
       proxy: {
         '/api-proxy': {
