@@ -208,12 +208,12 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
     const payload = new Blob([metadataPart, fileHeader, file, footer]);
 
     // 2. Send Single POST Request
-    const uploadUrl = `/api-proxy/upload/v1beta/files?uploadType=multipart`;
+    // Direct Google API endpoint with Key in URL
+    const uploadUrl = `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=multipart&key=${process.env.API_KEY}`;
 
     const response = await fetch(uploadUrl, {
         method: 'POST',
         headers: {
-            'x-goog-api-key': process.env.API_KEY || '',
             'Content-Type': `multipart/related; boundary=${boundary}`
         },
         body: payload
