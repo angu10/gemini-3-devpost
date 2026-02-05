@@ -173,78 +173,61 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
     return merged;
 };
 
-// --- MULTIPART UPLOAD IMPLEMENTATION (PROXY ENABLED) ---
+// --- MULTIPART UPLOAD IMPLEMENTATION (OPTIMIZED STREAMING) ---
+// Uses Blob construction to stream file data instead of reading entirely into memory.
 const uploadFileMultipart = async (file: File): Promise<any> => {
-    // FIX 1: Correct Metadata Format (No 'file' wrapper)
     const metadata = { displayName: file.name };
-    const boundary = '-------314159265358979323846'; 
-    const delimiter = "\r\n--" + boundary + "\r\n";
-    const close_delim = "\r\n--" + boundary + "--";
+    const boundary = '-------314159265358979323846';
+    const mimeType = file.type || 'application/octet-stream';
 
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            const contentType = file.type || 'application/octet-stream';
-            const metadataContentType = 'application/json; charset=UTF-8';
+    // Construct multipart headers
+    // Part 1: Metadata + Start of File Part
+    const headerPart = 
+        `--${boundary}\r\n` +
+        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+        JSON.stringify(metadata) + `\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: ${mimeType}\r\n\r\n`;
 
-            // Construct multipart body manually
-            const multipartRequestBody =
-                delimiter +
-                'Content-Type: ' + metadataContentType + '\r\n\r\n' +
-                JSON.stringify(metadata) +
-                delimiter +
-                'Content-Type: ' + contentType + '\r\n\r\n';
+    // Part 3: End Boundary
+    const footerPart = `\r\n--${boundary}--`;
 
-            const parts = [
-                multipartRequestBody, 
-                e.target?.result as ArrayBuffer, 
-                close_delim
-            ];
-            
-            const requestBody = new Blob(parts, { type: 'multipart/related; boundary=' + boundary });
-
-            // FIX 2: Use Proxy URL to avoid Service Worker interception and Header stripping
-            const url = `/api-proxy/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=multipart`;
-            
-            try {
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'multipart/related; boundary=' + boundary
-                    },
-                    body: requestBody
-                });
-                
-                if (!response.ok) {
-                    const errText = await response.text();
-                    throw new Error(`Upload failed: ${response.status} ${errText}`);
-                }
-                
-                const result = await response.json();
-                
-                // The result usually contains { file: { name: '...', uri: '...' } }
-                // Or sometimes just the file object directly depending on the API version.
-                const fileData = result.file || result;
-                
-                if (!fileData || !fileData.name) {
-                    throw new Error("Invalid response structure from Gemini Upload");
-                }
-                
-                resolve(fileData);
-            } catch (err) {
-                reject(err);
-            }
-        };
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(file);
+    // Construct Blob directly with File object (Browser streams it, prevents OOM)
+    const requestBody = new Blob([headerPart, file, footerPart], { 
+        type: `multipart/related; boundary=${boundary}` 
     });
+
+    // Use Proxy URL to avoid Service Worker interception and Header stripping
+    const url = `/api-proxy/upload/v1beta/files?key=${process.env.API_KEY}&uploadType=multipart`;
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': `multipart/related; boundary=${boundary}`
+        },
+        body: requestBody
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Upload failed: ${response.status} ${errText}`);
+    }
+
+    const result = await response.json();
+    const fileData = result.file || result;
+
+    if (!fileData || !fileData.name) {
+        throw new Error("Invalid response structure from Gemini Upload");
+    }
+
+    return fileData;
 };
 
 /**
  * Uploads a file to the Gemini File API.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
-  if (onProgress) onProgress("Uploading video to Gemini (Proxy Multipart)...");
+  if (onProgress) onProgress("Uploading video to Gemini (Optimized Stream)...");
   
   try {
     const uploadFileResource = await uploadFileMultipart(file);
