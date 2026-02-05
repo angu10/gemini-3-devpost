@@ -176,6 +176,7 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
 /**
  * Uploads a file using MANUAL Resumable Upload via Proxy.
  * Bypasses SDK upload to avoid CORS/Header stripping issues in cloud environments.
+ * Uses CHUNKED upload loop to prevent large request body stalling.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
     if (onProgress) onProgress("Initializing upload...");
@@ -210,33 +211,56 @@ export const uploadVideo = async (file: File, onProgress?: (msg: string) => void
     }
   
     // 3. Convert to Proxy URL
-    // The raw URL is absolute (e.g. https://generativelanguage.googleapis.com/upload/...)
-    // We strip the domain to route it through our /api-proxy
     const uploadUrl = uploadUrlRaw.replace('https://generativelanguage.googleapis.com', '/api-proxy');
   
-    if (onProgress) onProgress("Uploading video data...");
-  
-    // 4. Perform Actual Upload (Streamed via Proxy)
-    // We use the Blob directly so the browser streams it (memory efficient)
-    // We also include the API Key header again for safety, though the uploadUrl usually encodes auth.
-    const uploadResponse = await fetch(uploadUrl, {
-      method: 'POST', // 'upload, finalize' command works with POST on the session URI
-      headers: {
-        'x-goog-api-key': process.env.API_KEY || '',
-        'Content-Length': file.size.toString(),
-        'X-Goog-Upload-Offset': '0',
-        'X-Goog-Upload-Command': 'upload, finalize',
-      },
-      body: file
-    });
-  
-    if (!uploadResponse.ok) {
-       const text = await uploadResponse.text();
-       throw new Error(`File upload failed: ${uploadResponse.status} - ${text}`);
+    // 4. Chunked Upload Loop
+    // We split the file into 8MB chunks to avoid proxy buffering issues with large files.
+    const CHUNK_SIZE = 8 * 1024 * 1024; 
+    let offset = 0;
+    let fileInfo: any = null;
+
+    while (offset < file.size) {
+        const chunk = file.slice(offset, offset + CHUNK_SIZE);
+        const isLastChunk = offset + chunk.size >= file.size;
+        const command = isLastChunk ? 'upload, finalize' : 'upload';
+
+        if (onProgress) {
+             const percent = Math.min(100, Math.round((offset / file.size) * 100));
+             onProgress(`Uploading... ${percent}%`);
+        }
+
+        // NOTE: We do NOT send Content-Length or API Key here. 
+        // The uploadUrl contains the session ID which handles auth.
+        // The browser automatically sets Content-Length for the Blob.
+        const uploadResponse = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+                'X-Goog-Upload-Command': command,
+                'X-Goog-Upload-Offset': offset.toString(),
+            },
+            body: chunk
+        });
+
+        if (!uploadResponse.ok) {
+            const text = await uploadResponse.text();
+            throw new Error(`Chunk upload failed at offset ${offset}: ${uploadResponse.status} - ${text}`);
+        }
+
+        const status = uploadResponse.headers.get('x-goog-upload-status');
+
+        if (status === 'final') {
+             const result = await uploadResponse.json();
+             fileInfo = result.file;
+             break;
+        }
+        
+        // Prepare for next chunk
+        offset += CHUNK_SIZE;
     }
-  
-    const result = await uploadResponse.json();
-    const fileInfo = result.file;
+
+    if (!fileInfo) {
+        throw new Error("Upload completed but no file information returned.");
+    }
     
     // 5. Poll for processing using the SDK (GET requests are safe)
     if (onProgress) onProgress("Processing video...");

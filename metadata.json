@@ -3,6 +3,6 @@
   "description": "An AI-powered video repurposing tool that uses Gemini 3 Pro to automatically identify, title, and extract viral short clips from long-form videos.",
   "requestFramePermissions": [],
   "exposedHeaders": [
-    "x-google-upload-url"
+    "x-goog-upload-url"
   ]
 }
