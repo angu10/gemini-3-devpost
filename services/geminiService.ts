@@ -174,95 +174,60 @@ const performSmartEdit = (transcript: TranscriptSegment[]): TimeRange[] => {
 };
 
 /**
- * Uploads a file using MANUAL Resumable Upload via Proxy.
- * Bypasses SDK upload to avoid CORS/Header stripping issues in cloud environments.
- * Uses CHUNKED upload loop to prevent large request body stalling.
+ * Uploads a file using MULTIPART Upload via Proxy.
+ * This is a single-request strategy that bundles metadata and file content.
+ * It avoids the multi-step handshake and CORS headers of Resumable Uploads.
  */
 export const uploadVideo = async (file: File, onProgress?: (msg: string) => void): Promise<string> => {
-    if (onProgress) onProgress("Initializing upload...");
+    if (onProgress) onProgress("Uploading video (Multipart)...");
 
-    // 1. Initiate Resumable Upload (Proxied)
-    // We pass the API key via HEADER 'x-goog-api-key' instead of query param 
-    // to prevent encoding issues and 400 Bad Request errors.
-    const initUrl = `/api-proxy/upload/v1beta/files?uploadType=resumable`;
-    
-    const initResponse = await fetch(initUrl, {
-      method: 'POST',
-      headers: {
-        'x-goog-api-key': process.env.API_KEY || '',
-        'X-Goog-Upload-Protocol': 'resumable',
-        'X-Goog-Upload-Command': 'start',
-        'X-Goog-Upload-Header-Content-Length': file.size.toString(),
-        'X-Goog-Upload-Header-Content-Type': file.type || 'application/octet-stream',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ file: { displayName: file.name } })
+    const metadata = { file: { displayName: file.name } };
+    const boundary = "genai-multipart-boundary"; // Arbitrary boundary string
+
+    // 1. Construct the Multipart Body
+    // We construct the parts manually to avoid loading the entire file into a string variable.
+    // Part 1: Metadata (JSON)
+    const metadataPart = [
+        `--${boundary}\r\n`,
+        `Content-Type: application/json\r\n\r\n`,
+        JSON.stringify(metadata),
+        `\r\n`
+    ].join('');
+
+    // Part 2: File Header
+    const fileHeader = [
+        `--${boundary}\r\n`,
+        `Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`
+    ].join('');
+
+    // Part 3: Footer
+    const footer = `\r\n--${boundary}--`;
+
+    // Combine into a single Blob (Metadata + File + Footer)
+    // This allows the browser to stream the file component efficiently.
+    const payload = new Blob([metadataPart, fileHeader, file, footer]);
+
+    // 2. Send Single POST Request
+    const uploadUrl = `/api-proxy/upload/v1beta/files?uploadType=multipart`;
+
+    const response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+            'x-goog-api-key': process.env.API_KEY || '',
+            'Content-Type': `multipart/related; boundary=${boundary}`
+        },
+        body: payload
     });
-  
-    if (!initResponse.ok) {
-       const text = await initResponse.text();
-       throw new Error(`Upload init failed: ${initResponse.status} - ${text}`);
-    }
-  
-    // 2. Get Upload URL from Headers
-    const uploadUrlRaw = initResponse.headers.get('x-goog-upload-url');
-    if (!uploadUrlRaw) {
-      throw new Error("Failed to get upload URL. Server did not return x-goog-upload-url.");
-    }
-  
-    // 3. Convert to Proxy URL
-    const uploadUrl = uploadUrlRaw.replace('https://generativelanguage.googleapis.com', '/api-proxy');
-  
-    // 4. Chunked Upload Loop
-    // We split the file into 8MB chunks to avoid proxy buffering issues with large files.
-    const CHUNK_SIZE = 8 * 1024 * 1024; 
-    let offset = 0;
-    let fileInfo: any = null;
 
-    while (offset < file.size) {
-        const chunk = file.slice(offset, offset + CHUNK_SIZE);
-        const isLastChunk = offset + chunk.size >= file.size;
-        const command = isLastChunk ? 'upload, finalize' : 'upload';
-
-        if (onProgress) {
-             const percent = Math.min(100, Math.round((offset / file.size) * 100));
-             onProgress(`Uploading... ${percent}%`);
-        }
-
-        // NOTE: We do NOT send Content-Length or API Key here. 
-        // The uploadUrl contains the session ID which handles auth.
-        // The browser automatically sets Content-Length for the Blob.
-        const uploadResponse = await fetch(uploadUrl, {
-            method: 'POST',
-            headers: {
-                'X-Goog-Upload-Command': command,
-                'X-Goog-Upload-Offset': offset.toString(),
-            },
-            body: chunk
-        });
-
-        if (!uploadResponse.ok) {
-            const text = await uploadResponse.text();
-            throw new Error(`Chunk upload failed at offset ${offset}: ${uploadResponse.status} - ${text}`);
-        }
-
-        const status = uploadResponse.headers.get('x-goog-upload-status');
-
-        if (status === 'final') {
-             const result = await uploadResponse.json();
-             fileInfo = result.file;
-             break;
-        }
-        
-        // Prepare for next chunk
-        offset += CHUNK_SIZE;
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Upload failed: ${response.status} - ${text}`);
     }
 
-    if (!fileInfo) {
-        throw new Error("Upload completed but no file information returned.");
-    }
+    const result = await response.json();
+    const fileInfo = result.file;
     
-    // 5. Poll for processing using the SDK (GET requests are safe)
+    // 3. Poll for processing using the SDK (GET requests are safe)
     if (onProgress) onProgress("Processing video...");
     
     let currentFile = await ai.files.get({ name: fileInfo.name });
