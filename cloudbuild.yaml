@@ -6,16 +6,17 @@ steps:
       - '--build-arg'
       - 'VITE_GEMINI_API_KEY=${_API_KEY}'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/smartclip-ai:$BUILD_ID'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/smartclip-ai/app:$BUILD_ID'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/smartclip-ai:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/smartclip-ai/app:latest'
       - '.'
 
-  # Push image to Container Registry
+  # Push image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'gcr.io/$PROJECT_ID/smartclip-ai:$BUILD_ID'
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/smartclip-ai/app'
 
   # Deploy to Cloud Run
   - name: 'gcr.io/cloud-builders/gcloud'
@@ -24,7 +25,7 @@ steps:
       - 'deploy'
       - 'smartclip-ai'
       - '--image'
-      - 'gcr.io/$PROJECT_ID/smartclip-ai:$BUILD_ID'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/smartclip-ai/app:$BUILD_ID'
       - '--platform=managed'
       - '--region=us-central1'
       - '--allow-unauthenticated'
@@ -40,5 +41,5 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 images:
-  - 'gcr.io/$PROJECT_ID/smartclip-ai:$BUILD_ID'
-  - 'gcr.io/$PROJECT_ID/smartclip-ai:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/smartclip-ai/app:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/smartclip-ai/app:latest'
