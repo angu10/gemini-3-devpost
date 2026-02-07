@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Clip, AppState, AnalysisResponse, VirtualEdit, ChatMessage, PlayerMode, TranscriptSegment, ClipEdit, AppMode } from './types';
-import { MAX_FILE_SIZE_MB, MODELS, DEFAULT_MODEL } from './constants';
+import { MAX_FILE_SIZE_MB, MAX_VIDEO_DURATION_MINUTES, MODELS, DEFAULT_MODEL } from './constants';
 import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages, generateTTS, validateGeminiConnection } from './services/geminiService';
 import { getCachedAnalysis, saveAnalysisToCache } from './services/dbService';
 import { Button } from './components/Button';
@@ -72,6 +72,10 @@ export const App: React.FC = () => {
   const [geminiStatus, setGeminiStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [firebaseStatus, setFirebaseStatus] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Full Video Subtitles
+  const [showFullVideoSubtitles, setShowFullVideoSubtitles] = useState<boolean>(false);
+  const [currentSubtitleText, setCurrentSubtitleText] = useState<string>('');
+
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const processingVideoRef = useRef<HTMLVideoElement>(null);
@@ -119,6 +123,34 @@ export const App: React.FC = () => {
       setErrorMsg("Please upload a valid video file.");
       return;
     }
+
+    // Check video duration
+    const videoDurationCheck = await new Promise<boolean>((resolve) => {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+
+      video.onloadedmetadata = () => {
+        window.URL.revokeObjectURL(video.src);
+        const durationMinutes = video.duration / 60;
+
+        if (durationMinutes > MAX_VIDEO_DURATION_MINUTES) {
+          setErrorMsg(`Video is ${durationMinutes.toFixed(1)} minutes long. Please upload a video shorter than ${MAX_VIDEO_DURATION_MINUTES} minutes to protect API quota.`);
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      };
+
+      video.onerror = () => {
+        window.URL.revokeObjectURL(video.src);
+        setErrorMsg("Could not read video metadata. Please try another file.");
+        resolve(false);
+      };
+
+      video.src = URL.createObjectURL(selectedFile);
+    });
+
+    if (!videoDurationCheck) return;
 
     setFile(selectedFile);
     setVideoUrl(URL.createObjectURL(selectedFile));
@@ -562,7 +594,17 @@ export const App: React.FC = () => {
         else if (currentTime < videoRef.current.duration - 0.5) videoRef.current.pause();
       }
     }
-  }, [playerMode, reel, reelCurrentIndex, activeClipId, analysisData, virtualEdit]);
+
+    // Full Video Subtitles Logic
+    if (showFullVideoSubtitles && transcript.length > 0) {
+      const currentSegment = transcript.find(seg =>
+        currentTime >= seg.start && currentTime <= seg.end
+      );
+      setCurrentSubtitleText(currentSegment?.text || '');
+    } else if (!showFullVideoSubtitles) {
+      setCurrentSubtitleText('');
+    }
+  }, [playerMode, reel, reelCurrentIndex, activeClipId, analysisData, virtualEdit, showFullVideoSubtitles, transcript]);
 
   const triggerTransition = () => { setIsTransitioning(true); setTimeout(() => setIsTransitioning(false), 500); };
 
@@ -949,6 +991,15 @@ export const App: React.FC = () => {
                         />
                         {/* Overlays/Subtitles Rendering (Same as before) */}
                         <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                           {/* Full Video Subtitles (when enabled) */}
+                           {showFullVideoSubtitles && currentSubtitleText && !currentClipEdit?.subtitles && (
+                             <div className="absolute bottom-16 left-0 right-0 flex justify-center px-4">
+                                <div className="bg-black/80 text-white px-6 py-3 rounded-lg text-base font-semibold backdrop-blur-sm max-w-[90%] text-center leading-tight shadow-lg">
+                                  {currentSubtitleText}
+                                </div>
+                             </div>
+                           )}
+                           {/* Clip-Specific Subtitles (override full video subtitles when present) */}
                            {currentClipEdit?.subtitles && (
                              <div className="absolute bottom-16 left-0 right-0 flex justify-center">
                                 <div className="bg-black/60 text-white px-4 py-2 rounded-lg text-lg font-bold backdrop-blur-sm max-w-[80%] text-center">{currentClipEdit.subtitles}</div>
@@ -979,6 +1030,14 @@ export const App: React.FC = () => {
                                 <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">{analysisData.clips.length} found</span>
                              </div>
                              <div className="flex gap-2">
+                               <button
+                                 onClick={() => setShowFullVideoSubtitles(!showFullVideoSubtitles)}
+                                 disabled={!transcript || transcript.length === 0}
+                                 className={`text-xs font-bold px-3 py-1.5 rounded flex items-center gap-2 transition-all ${showFullVideoSubtitles ? 'bg-green-900/40 text-green-300 border border-green-500/30 hover:bg-green-800/60' : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700'} disabled:opacity-50 disabled:cursor-not-allowed`}
+                                 title={transcript.length === 0 ? 'Transcript not available' : showFullVideoSubtitles ? 'Hide subtitles' : 'Show subtitles'}
+                               >
+                                 📝 {showFullVideoSubtitles ? "Subtitles ON" : "Subtitles"}
+                               </button>
                                <button onClick={handleDownloadAllClips} disabled={isExportingSmart} className="text-xs font-bold bg-slate-800 text-blue-300 border border-blue-500/30 px-3 py-1.5 rounded hover:bg-slate-700 flex items-center gap-2">
                                   {isExportingSmart ? "Processing..." : "Download All"}
                                </button>

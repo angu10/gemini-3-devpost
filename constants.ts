@@ -8,7 +8,8 @@ export const MODELS = {
 
 export const DEFAULT_MODEL = MODELS.FLASH;
 
-export const MAX_FILE_SIZE_MB = 200; // Limit to 200MB
+export const MAX_FILE_SIZE_MB = 25; // Limit to 25MB to protect API quota
+export const MAX_VIDEO_DURATION_MINUTES = 5; // Limit to 5 minutes
 
 export const SAMPLE_PROMPT = `
 You are a World-Class Video Editor & Viral Content Director.
