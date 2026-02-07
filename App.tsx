@@ -417,7 +417,8 @@ export const App: React.FC = () => {
     setIsProcessingChat(true);
     setLongProcessWarning(false);
 
-    const timer = setTimeout(() => { setLongProcessWarning(true); }, 8000);
+    // Show warning after 15 seconds (Pro model can take 30-60s for complex requests)
+    const timer = setTimeout(() => { setLongProcessWarning(true); }, 15000);
 
     try {
       const uri = await ensureFileUploaded(file);

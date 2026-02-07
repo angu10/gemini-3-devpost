@@ -580,7 +580,14 @@ export const processUserCommand = async (
      config.thinkingConfig = { thinkingBudget: 2048 };
   }
 
-  const response = await ai.models.generateContent({
+  // Add timeout wrapper to prevent infinite hanging
+  // Pro model with extended thinking can take 60+ seconds for complex requests
+  const timeout = 60000; // 60 seconds
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Request timed out after 60 seconds. The AI is taking too long - try using Flash model for faster responses.')), timeout);
+  });
+
+  const apiCall = ai.models.generateContent({
     model: modelName,
     contents: [
       {
@@ -593,6 +600,8 @@ export const processUserCommand = async (
     ],
     config: config,
   });
+
+  const response = await Promise.race([apiCall, timeoutPromise]) as any;
 
   const text = response.text;
   if (!text) {
