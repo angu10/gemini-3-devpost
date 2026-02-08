@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Clip, AppState, AnalysisResponse, VirtualEdit, ChatMessage, PlayerMode, TranscriptSegment, ClipEdit, AppMode } from './types';
 import { MAX_FILE_SIZE_MB, MAX_VIDEO_DURATION_MINUTES, MODELS, DEFAULT_MODEL } from './constants';
-import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages, generateTTS, validateGeminiConnection } from './services/geminiService';
+import { analyzeVideo, processUserCommand, uploadVideo, generateStoryFromImages, generateTTS, validateGeminiConnection, sanitizeClip } from './services/geminiService';
 import { getCachedAnalysis, saveAnalysisToCache } from './services/dbService';
 import { Button } from './components/Button';
 import { db, validateFirebaseConnection } from './firebase';
@@ -450,11 +450,14 @@ export const App: React.FC = () => {
                      if (!prev) return null;
                      const updatedClips = prev.clips.map(c => {
                          if (c.id === activeClipId) {
-                             return {
+                             // Apply new timestamps and sanitize to enforce constraints
+                             const editedClip = {
                                  ...c,
                                  startTime: result.data.startTime !== undefined ? result.data.startTime : c.startTime,
                                  endTime: result.data.endTime !== undefined ? result.data.endTime : c.endTime
                              };
+                             // Sanitize to enforce max 30s duration and valid ranges
+                             return sanitizeClip(editedClip);
                          }
                          return c;
                      });

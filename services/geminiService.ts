@@ -57,7 +57,7 @@ const fileToPart = async (file: File): Promise<any> => {
 };
 
 // --- Helper: Sanitize Clip Data ---
-const sanitizeClip = (clip: any): Clip => {
+export const sanitizeClip = (clip: any): Clip => {
     let start = Number(clip.startTime);
     let end = Number(clip.endTime);
 
